@@ -1,0 +1,1 @@
+import{j as a}from"./react-vendor-jvB8CF78.js";import{L as m}from"./router-vendor-DRcD4SGS.js";import{af as o}from"./antd-vendor-jS9j4Udn.js";function c({items:e}){const s=e.map(r=>({title:r.href?a.jsx(m,{to:r.href,children:r.label}):r.label}));return a.jsx(o,{className:"page-breadcrumb",items:s})}export{c as P};

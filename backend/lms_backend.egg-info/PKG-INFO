@@ -1,0 +1,43 @@
+Metadata-Version: 2.4
+Name: lms-backend
+Version: 0.1.0
+Summary: Backend foundation for LMS auth and analytics platform
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: email-validator>=2.2.0
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: psycopg[binary]>=3.2.0
+Requires-Dist: pydantic-settings>=2.6.0
+Requires-Dist: PyJWT>=2.10.0
+Requires-Dist: sqlalchemy>=2.0.36
+Requires-Dist: uvicorn[standard]>=0.32.0
+Provides-Extra: dev
+Requires-Dist: httpx>=0.28.0; extra == "dev"
+Requires-Dist: pytest>=8.3.0; extra == "dev"
+
+# LMS Backend
+
+Simple backend foundation for an online learning platform built with FastAPI, SQLAlchemy, PostgreSQL, and JWT.
+
+## Quick start
+
+1. Create a virtual environment and install dependencies.
+2. Copy `.env.example` to `.env`.
+3. Update `DATABASE_URL` for your PostgreSQL instance.
+4. Start the API with `uvicorn app.main:app --reload`.
+
+Tables are created automatically on startup for this simplified stage.
+
+## Main endpoints
+
+- `POST /api/v1/auth/register`
+- `POST /api/v1/auth/login`
+- `GET /api/v1/auth/me`
+
+## Swagger testing
+
+1. Open `/docs`.
+2. Call `POST /api/v1/auth/register` or `POST /api/v1/auth/login`.
+3. Copy `access_token`.
+4. Click `Authorize` and paste `Bearer <access_token>`.
+5. Call `GET /api/v1/auth/me`.
