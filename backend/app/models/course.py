@@ -16,6 +16,7 @@ class Course(Base):
     author_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     thumbnail_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     is_free: Mapped[bool] = mapped_column(nullable=False, default=True)
     is_published: Mapped[bool] = mapped_column(nullable=False, default=False)
@@ -30,3 +31,7 @@ class Course(Base):
     author: Mapped["User"] = relationship(back_populates="authored_courses")
     modules: Mapped[list["Module"]] = relationship(back_populates="course", cascade="all, delete-orphan")
     enrollments: Mapped[list["Enrollment"]] = relationship(back_populates="course", cascade="all, delete-orphan")
+    collaborators: Mapped[list["CourseCollaborator"]] = relationship(
+        back_populates="course",
+        cascade="all, delete-orphan",
+    )

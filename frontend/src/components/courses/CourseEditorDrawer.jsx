@@ -17,8 +17,15 @@ export function CourseEditorDrawer({
   photoHint,
   previewUrl,
   fileInputRef,
+  categoryOptions = [],
 }) {
   const editorPreviewUrl = previewUrl || editingCourse?.thumbnail_url || "";
+  const selectedCategory = Form.useWatch("category", form);
+
+  function handleCategoryPresetChange(event) {
+    const next = event?.target?.value || "";
+    form.setFieldValue("category", next);
+  }
 
   return (
     <Drawer
@@ -85,7 +92,7 @@ export function CourseEditorDrawer({
               label="Название курса"
               rules={[{ required: true, message: "Введите название курса" }]}
             >
-              <Input placeholder="Например, Основы FastAPI" />
+              <Input placeholder="Например, Основы программирования" />
             </Form.Item>
             <Form.Item
               name="description"
@@ -94,11 +101,19 @@ export function CourseEditorDrawer({
             >
               <Input.TextArea rows={6} placeholder="Кратко опишите пользу и структуру курса" />
             </Form.Item>
-            <Form.Item name="is_free" label="Доступность">
-              <Radio.Group>
-                <Radio.Button value>Бесплатный</Radio.Button>
-                <Radio.Button value={false}>Платный</Radio.Button>
+            <Form.Item label="Популярные категории">
+              <Radio.Group value={selectedCategory || undefined} onChange={handleCategoryPresetChange}>
+                <Space size={[8, 8]} wrap>
+                  {categoryOptions.map((value) => (
+                    <Radio.Button key={value} value={value}>
+                      {value}
+                    </Radio.Button>
+                  ))}
+                </Space>
               </Radio.Group>
+            </Form.Item>
+            <Form.Item name="category" label="Своя категория">
+              <Input placeholder="Например, Программирование" allowClear />
             </Form.Item>
             <Form.Item name="is_published" label="Статус">
               <Radio.Group>

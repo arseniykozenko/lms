@@ -1,9 +1,10 @@
 ﻿import React from "react";
 import { Button, Popconfirm, Typography } from "antd";
 
+import { getUserDisplayName } from "../../lib/userName";
 import { formatDate } from "./moduleHelpers";
 
-export function CommentThread({ comment, currentUserId, deletingCommentId, onDelete, onReply, depth = 0 }) {
+export function CommentThread({ comment, currentUserId, deletingCommentId, onDelete, onReply, onReport, depth = 0 }) {
   const isOwner = currentUserId === comment.user?.id;
   const isDeleted = comment.is_deleted;
 
@@ -13,7 +14,7 @@ export function CommentThread({ comment, currentUserId, deletingCommentId, onDel
     >
       <div className="comment-thread-head">
         <div>
-          <Typography.Text strong>{isDeleted ? "Удаленный комментарий" : comment.user?.full_name || comment.user?.email}</Typography.Text>
+          <Typography.Text strong>{isDeleted ? "Удаленный комментарий" : getUserDisplayName(comment.user)}</Typography.Text>
           <div className="comment-thread-meta">{formatDate(comment.created_at)}</div>
           {isDeleted ? <div className="comment-thread-deleted-label">Автор удалил сообщение, но ответы в ветке сохранены</div> : null}
         </div>
@@ -36,6 +37,11 @@ export function CommentThread({ comment, currentUserId, deletingCommentId, onDel
               </Button>
             </Popconfirm>
           ) : null}
+          {!isDeleted ? (
+            <Button type="link" onClick={() => onReport?.(comment)}>
+              Пожаловаться
+            </Button>
+          ) : null}
         </div>
       </div>
       <Typography.Paragraph className="comment-thread-content" type={isDeleted ? "secondary" : undefined}>
@@ -52,6 +58,7 @@ export function CommentThread({ comment, currentUserId, deletingCommentId, onDel
               deletingCommentId={deletingCommentId}
               onDelete={onDelete}
               onReply={onReply}
+              onReport={onReport}
               depth={depth + 1}
             />
           ))}

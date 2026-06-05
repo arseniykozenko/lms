@@ -39,6 +39,7 @@ export function TeacherModuleWorkspace({
   onDeleteComment,
   onSubmitComment,
   onReply,
+  onReportComment,
   quiz,
   quizPending,
   attempts,
@@ -133,6 +134,7 @@ export function TeacherModuleWorkspace({
           onDelete={onDeleteComment}
           onSubmit={onSubmitComment}
           onReply={onReply}
+          onReport={onReportComment}
         />
       ),
     },

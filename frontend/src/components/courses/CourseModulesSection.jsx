@@ -7,6 +7,7 @@ export function CourseModulesSection({
   canManageCourse,
   modulesLocked,
   alreadyEnrolled,
+  canEnrollCourse = false,
   enrolling,
   modules,
   modulesPending,
@@ -43,7 +44,7 @@ export function CourseModulesSection({
 
       {modulesLocked && !canManageCourse ? (
         <Empty description="Модули откроются после записи на курс" image={Empty.PRESENTED_IMAGE_SIMPLE}>
-          {!alreadyEnrolled ? (
+          {canEnrollCourse ? (
             <Button type="primary" loading={enrolling} onClick={onEnroll}>
               Записаться и открыть модули
             </Button>

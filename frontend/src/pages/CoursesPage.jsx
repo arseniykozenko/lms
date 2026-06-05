@@ -1,20 +1,26 @@
 ﻿import React from "react";
 import {
+  CloseCircleOutlined,
   DeleteOutlined,
   EditOutlined,
   EyeInvisibleOutlined,
+  FilterOutlined,
   PlusOutlined,
+  SearchOutlined,
   TeamOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
-import { Button, Form, Popconfirm, Space, Typography, message } from "antd";
+import { Badge, Button, Card, Form, Input, Modal, Popconfirm, Space, Tag, Typography, message } from "antd";
 import { useUnit } from "effector-react";
 import { Link } from "react-router-dom";
 
 import { AppShell } from "../components/AppShell";
+import { getCourseCategories } from "../api/courses";
 import { CourseCatalogSection } from "../components/courses/CourseCatalogSection";
 import { CourseEditorDrawer } from "../components/courses/CourseEditorDrawer";
 import { CourseStudentsModal } from "../components/courses/CourseStudentsModal";
+import { POPULAR_COURSE_CATEGORIES, normalizeCategory } from "../lib/courseCategories";
+import { getErrorMessage } from "../lib/errors";
 import { $courses, $user } from "../models/auth";
 import {
   $catalogCourses,
@@ -32,6 +38,7 @@ import {
   deleteCourseFx,
   enrollCourseFx,
   loadCourseStudentsFx,
+  loadCatalogCoursesFx,
   removeCourseStudentFx,
   updateCourseFx,
   uploadCourseThumbnailFx,
@@ -40,7 +47,7 @@ import {
 const defaultCourseValues = {
   title: "",
   description: "",
-  is_free: true,
+  category: "",
   is_published: false,
 };
 
@@ -66,6 +73,7 @@ export function CoursesPage() {
     submitDelete,
     fetchCourseStudents,
     submitRemoveStudent,
+    loadCatalogCourses,
   ] = useUnit([
     $user,
     $courses,
@@ -86,11 +94,16 @@ export function CoursesPage() {
     uploadCourseThumbnailFx,
     deleteCourseFx,
     loadCourseStudentsFx,
+    loadCatalogCoursesFx,
     removeCourseStudentFx,
   ]);
 
   const [editorOpen, setEditorOpen] = React.useState(false);
+  const [query, setQuery] = React.useState("");
+  const [categoryFilters, setCategoryFilters] = React.useState([]);
+  const [showAllCategories, setShowAllCategories] = React.useState(false);
   const [studentsOpen, setStudentsOpen] = React.useState(false);
+  const [categories, setCategories] = React.useState([]);
   const [editingCourse, setEditingCourse] = React.useState(null);
   const [selectedCourse, setSelectedCourse] = React.useState(null);
   const [pendingPhoto, setPendingPhoto] = React.useState(null);
@@ -101,7 +114,24 @@ export function CoursesPage() {
 
   React.useEffect(() => {
     openPage();
-  }, [openPage]);
+    // run once on mount; live updates are handled by explicit filter reloads below
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  React.useEffect(() => {
+    getCourseCategories()
+      .then(setCategories)
+      .catch(() => setCategories([]));
+  }, []);
+
+  React.useEffect(() => {
+    const timerId = window.setTimeout(() => {
+      loadCatalogCourses({
+        q: query.trim() || undefined,
+      });
+    }, 250);
+    return () => window.clearTimeout(timerId);
+  }, [query, loadCatalogCourses]);
 
   React.useEffect(() => {
     if (!pendingPhoto) {
@@ -118,6 +148,30 @@ export function CoursesPage() {
   const isTeacher = user?.role === "teacher" || user?.role === "admin";
   const myCourseIds = new Set(myCourses.map((course) => course.id));
   const savingCourse = creating || updating || uploadingThumbnail;
+  const normalizedQuery = query.trim().toLowerCase();
+  const allCategoryOptions = React.useMemo(() => {
+    const map = new Map();
+    [...POPULAR_COURSE_CATEGORIES, ...categories]
+      .map(normalizeCategory)
+      .filter(Boolean)
+      .forEach((item) => map.set(item, item));
+    return Array.from(map.values());
+  }, [categories]);
+  const visibleCategoryOptions = React.useMemo(() => {
+    if (showAllCategories || allCategoryOptions.length <= 8) return allCategoryOptions;
+    return allCategoryOptions.slice(0, 8);
+  }, [allCategoryOptions, showAllCategories]);
+  const activeFiltersCount = (query.trim() ? 1 : 0) + categoryFilters.length;
+  const visibleCourses = React.useMemo(() => {
+    return catalogCourses.filter((course) => {
+      const normalizedCourseCategory = normalizeCategory(course.category);
+      const inCategory = categoryFilters.length === 0 || categoryFilters.includes(normalizedCourseCategory);
+      if (!inCategory) return false;
+      if (!normalizedQuery) return true;
+      const haystack = `${course.title || ""} ${course.description || ""}`.toLowerCase();
+      return haystack.includes(normalizedQuery);
+    });
+  }, [catalogCourses, categoryFilters, normalizedQuery]);
 
   function resetEditorState() {
     setEditingCourse(null);
@@ -145,7 +199,7 @@ export function CoursesPage() {
     form.setFieldsValue({
       title: course.title,
       description: course.description,
-      is_free: course.is_free,
+      category: course.category || "",
       is_published: course.is_published,
     });
     setPendingPhoto(null);
@@ -166,7 +220,7 @@ export function CoursesPage() {
     try {
       await fetchCourseStudents(course.id);
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось загрузить список студентов");
+      message.error(getErrorMessage(error, "Не удалось загрузить список студентов"));
     }
   }
 
@@ -221,17 +275,25 @@ export function CoursesPage() {
       message.success(editingCourse ? "Курс обновлен" : "Курс создан");
       closeEditor();
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось сохранить курс");
+      message.error(getErrorMessage(error, "Не удалось сохранить курс"));
     }
   }
 
   async function handleEnroll(courseId) {
-    try {
-      await submitEnroll(courseId);
-      message.success("Вы записались на курс");
-    } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось записаться на курс");
-    }
+    Modal.confirm({
+      title: "Записаться на курс?",
+      content: "Курс будет добавлен в раздел «Мои курсы». Вы сможете продолжить обучение в любое время.",
+      okText: "Да, записаться",
+      cancelText: "Отмена",
+      onOk: async () => {
+        try {
+          await submitEnroll(courseId);
+          message.success("Вы записались на курс");
+        } catch (error) {
+          message.error(getErrorMessage(error, "Не удалось записаться на курс"));
+        }
+      },
+    });
   }
 
   async function handlePublishToggle(course) {
@@ -244,7 +306,7 @@ export function CoursesPage() {
       });
       message.success(nextPublished ? "Курс опубликован" : "Курс снят с публикации");
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось изменить статус курса");
+      message.error(getErrorMessage(error, "Не удалось изменить статус курса"));
     }
   }
 
@@ -253,12 +315,12 @@ export function CoursesPage() {
       await submitDelete(courseId);
       message.success("Курс удален");
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось удалить курс");
+      message.error(getErrorMessage(error, "Не удалось удалить курс"));
     }
   }
 
   async function handleRemoveStudent(studentId) {
-    if (!selectedCourse) return;
+    if (!selectedCourse?.id || !studentId || studentId === "undefined") return;
 
     try {
       await submitRemoveStudent({
@@ -267,7 +329,7 @@ export function CoursesPage() {
       });
       message.success("Студент удален с курса");
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось удалить студента с курса");
+      message.error(getErrorMessage(error, "Не удалось удалить студента с курса"));
     }
   }
 
@@ -323,20 +385,29 @@ export function CoursesPage() {
     );
   }
 
+  function toggleCategoryFilter(category) {
+    setCategoryFilters((prev) => (prev.includes(category) ? prev.filter((item) => item !== category) : [...prev, category]));
+  }
+
+  function resetFilters() {
+    setQuery("");
+    setCategoryFilters([]);
+  }
+
   return (
     <AppShell
       title="Каталог курсов"
       subtitle={
         isTeacher
-          ? "Создавайте новые курсы, редактируйте их и публикуйте для студентов."
-          : "Выбирайте опубликованные курсы и записывайтесь на обучение."
+          ? "Создание, редактирование и публикация курсов."
+          : "Просмотр опубликованных курсов и запись на обучение."
       }
     >
       <div className="page-toolbar">
         <Typography.Paragraph className="panel-copy toolbar-copy">
           {isTeacher
-            ? "Здесь можно управлять курсами целиком: создавать, редактировать, менять обложку, публиковать, смотреть список студентов и удалять курс."
-            : 'После записи курс сразу появится во вкладке "Мои курсы".'}
+            ? "Управляйте курсами и состоянием публикации."
+            : 'После записи курс появится во вкладке "Мои курсы".'}
         </Typography.Paragraph>
         {isTeacher ? (
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreateDrawer}>
@@ -345,8 +416,54 @@ export function CoursesPage() {
         ) : null}
       </div>
 
+      <Card className="panel-card courses-filters-card">
+        <Space direction="vertical" size={14} style={{ width: "100%" }}>
+          <div className="courses-filters-head">
+            <Badge count={activeFiltersCount} size="small" color="#0f766e">
+              <Typography.Text strong>
+                <FilterOutlined /> Фильтры
+              </Typography.Text>
+            </Badge>
+            <Button
+              size="small"
+              icon={<CloseCircleOutlined />}
+              onClick={resetFilters}
+              disabled={activeFiltersCount === 0}
+            >
+              Сбросить
+            </Button>
+          </div>
+
+          <Input
+            allowClear
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Поиск по названию и описанию"
+            prefix={<SearchOutlined />}
+            size="large"
+          />
+
+          <div className="courses-categories-wrap">
+            {visibleCategoryOptions.map((category) => (
+              <Tag.CheckableTag
+                key={category}
+                checked={categoryFilters.includes(category)}
+                onChange={() => toggleCategoryFilter(category)}
+              >
+                {category}
+              </Tag.CheckableTag>
+            ))}
+            {allCategoryOptions.length > 8 ? (
+              <Button type="link" size="small" onClick={() => setShowAllCategories((value) => !value)}>
+                {showAllCategories ? "Свернуть" : "Показать все"}
+              </Button>
+            ) : null}
+          </div>
+        </Space>
+      </Card>
+
       <CourseCatalogSection
-        courses={catalogCourses}
+        courses={visibleCourses}
         catalogPending={catalogPending}
         isTeacher={isTeacher}
         userId={user?.id}
@@ -369,6 +486,7 @@ export function CoursesPage() {
         photoHint={photoHint}
         previewUrl={previewUrl}
         fileInputRef={fileInputRef}
+        categoryOptions={allCategoryOptions}
       />
 
       <CourseStudentsModal
@@ -383,3 +501,4 @@ export function CoursesPage() {
     </AppShell>
   );
 }
+

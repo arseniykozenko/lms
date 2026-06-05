@@ -10,6 +10,15 @@ export async function getModuleContents(moduleId) {
   return data;
 }
 
+export async function markModuleContentViewed(contentId) {
+  await api.post(`/module-contents/${contentId}/view`);
+}
+
+export async function transcribeModuleContent(contentId) {
+  const { data } = await api.post(`/module-contents/${contentId}/transcribe`);
+  return data;
+}
+
 export async function getModuleAssignments(moduleId) {
   const { data } = await api.get(`/modules/${moduleId}/assignments`);
   return data;
@@ -38,6 +47,11 @@ export async function uploadAssignmentAttachment(assignmentId, files) {
   const { data } = await api.post(`/assignments/${assignmentId}/attachment`, formData, {
     headers: { "Content-Type": "multipart/form-data" },
   });
+  return data;
+}
+
+export async function clearAssignmentAttachment(assignmentId) {
+  const { data } = await api.delete(`/assignments/${assignmentId}/attachment`);
   return data;
 }
 

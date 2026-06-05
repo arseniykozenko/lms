@@ -26,7 +26,7 @@ class ModuleService:
         course = self.course_repo.get_by_id(payload.course_id)
         if course is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
-        self._ensure_manage_course(course.author_id, current_user)
+        self.courses.ensure_can_manage_course(course.id, current_user)
         modules = self.modules.list_by_course(payload.course_id)
         module = Module(
             course_id=payload.course_id,
@@ -45,7 +45,12 @@ class ModuleService:
         module = self._get_module_or_404(module_id)
         if not self.courses.has_course_access(module.course_id, current_user):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are not enrolled in this course")
-        if not module.is_published and current_user.role != UserRole.ADMIN and module.course.author_id != current_user.id:
+        if (
+            not module.is_published
+            and current_user.role != UserRole.ADMIN
+            and module.course.author_id != current_user.id
+            and not self.courses.is_course_collaborator(module.course_id, current_user.id)
+        ):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Module is not published")
         return self._to_module_read(module)
 
@@ -56,13 +61,16 @@ class ModuleService:
         visible = [
             module
             for module in modules
-            if module.is_published or current_user.role == UserRole.ADMIN or module.course.author_id == current_user.id
+            if module.is_published
+            or current_user.role == UserRole.ADMIN
+            or module.course.author_id == current_user.id
+            or self.courses.is_course_collaborator(module.course_id, current_user.id)
         ]
         return [self._to_module_read(module) for module in visible]
 
     def update_module(self, module_id: UUID, payload: ModuleUpdate, current_user: UserRead) -> ModuleRead:
         module = self._get_module_or_404(module_id)
-        self._ensure_manage_course(module.course.author_id, current_user)
+        self.courses.ensure_can_manage_course(module.course_id, current_user)
         for field in ("title", "description", "is_published"):
             value = getattr(payload, field)
             if value is not None:
@@ -77,7 +85,7 @@ class ModuleService:
         course = self.course_repo.get_by_id(course_id)
         if course is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
-        self._ensure_manage_course(course.author_id, current_user)
+        self.courses.ensure_can_manage_course(course.id, current_user)
 
         modules = self.modules.list_by_course(course_id)
         existing_ids = {module.id for module in modules}
@@ -102,12 +110,6 @@ class ModuleService:
         if module is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Module not found")
         return module
-
-    def _ensure_manage_course(self, author_id: UUID, current_user: UserRead) -> None:
-        if current_user.role == UserRole.ADMIN:
-            return
-        if current_user.role != UserRole.TEACHER or author_id != current_user.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
 
     def _to_module_read(self, module: Module) -> ModuleRead:
         return ModuleRead(

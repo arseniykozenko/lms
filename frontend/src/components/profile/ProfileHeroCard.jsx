@@ -1,8 +1,9 @@
 import React from "react";
 import { MailOutlined, UserOutlined } from "@ant-design/icons";
 import { Avatar, Card, Typography } from "antd";
+import { profileRoleLabel } from "../../lib/roles";
 
-export function ProfileHeroCard({ displayPhoto, fullName, email, isTeacher }) {
+export function ProfileHeroCard({ displayPhoto, fullName, email, role }) {
   return (
     <Card className="profile-hero-card">
       <Avatar size={88} icon={<UserOutlined />} src={displayPhoto} />
@@ -12,7 +13,7 @@ export function ProfileHeroCard({ displayPhoto, fullName, email, isTeacher }) {
       <Typography.Paragraph className="profile-email">
         <MailOutlined /> {email}
       </Typography.Paragraph>
-      <div className="profile-role-pill">{isTeacher ? "Профиль преподавателя" : "Профиль студента"}</div>
+      <div className="profile-role-pill">{profileRoleLabel(role)}</div>
     </Card>
   );
 }

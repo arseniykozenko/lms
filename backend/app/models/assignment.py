@@ -33,6 +33,7 @@ class Assignment(Base):
     attachment_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     attachment_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     max_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_published: Mapped[bool] = mapped_column(nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     updated_at: Mapped[datetime] = mapped_column(

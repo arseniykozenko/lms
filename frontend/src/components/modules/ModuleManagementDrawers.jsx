@@ -39,6 +39,8 @@ export function ModuleManagementDrawers({
   onCloseAssignmentDrawer,
   onSaveAssignment,
   onPrepareAssignmentFiles,
+  onClearAssignmentAttachments,
+  clearingAssignmentAttachments,
   submissionsDrawerOpen,
   reviewAssignment,
   assignmentSubmissions,
@@ -81,6 +83,8 @@ export function ModuleManagementDrawers({
         onClose={onCloseAssignmentDrawer}
         onSubmit={onSaveAssignment}
         onPrepareFiles={onPrepareAssignmentFiles}
+        onClearAttachments={onClearAssignmentAttachments}
+        clearingAttachments={clearingAssignmentAttachments}
       />
 
       <AssignmentSubmissionsDrawer

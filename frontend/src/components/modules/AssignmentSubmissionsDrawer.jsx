@@ -4,6 +4,7 @@ import { Alert, Button, Collapse, Drawer, Empty, Form, Input, InputNumber, Segme
 import { AttachmentList } from "../shared/AttachmentList";
 import { MarkdownContent } from "../shared/MarkdownContent";
 import { MarkdownEditor } from "../shared/MarkdownEditor";
+import { getUserDisplayName } from "../../lib/userName";
 import { formatDate } from "./moduleHelpers";
 
 const FILTER_OPTIONS = [
@@ -47,7 +48,7 @@ export function AssignmentSubmissionsDrawer({
     if (!query) return visibleSubmissions;
 
     return visibleSubmissions.filter((submission) => {
-      const fullName = submission.student?.full_name?.toLowerCase() || "";
+      const fullName = getUserDisplayName(submission.student).toLowerCase();
       const email = submission.student?.email?.toLowerCase() || "";
       return fullName.includes(query) || email.includes(query);
     });
@@ -104,7 +105,7 @@ function SubmissionSummary({ submission }) {
     <div className="assignment-submission-summary">
       <div className="assignment-submission-summary-copy">
         <Typography.Title level={5} className="assignment-submission-summary-title">
-          {submission.student?.full_name || submission.student?.email || "Студент"}
+          {getUserDisplayName(submission.student) || "Студент"}
         </Typography.Title>
         <Typography.Text type="secondary">{formatDate(submission.submitted_at)}</Typography.Text>
       </div>

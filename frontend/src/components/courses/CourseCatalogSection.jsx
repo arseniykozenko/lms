@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 import { Card, Col, Empty, Row, Tag, Typography } from "antd";
 
 import { CourseCardItem } from "./CourseCardItem";
@@ -37,6 +37,7 @@ export function CourseCatalogSection({
                       {course.is_published ? "Опубликован" : "Черновик"}
                     </Tag>
                   ) : null}
+                  {course.category ? <Tag color="blue">{course.category}</Tag> : null}
                   {isOwnCourse ? <Tag color="gold">Ваш курс</Tag> : null}
                   {alreadyInMyCourses && !isOwnCourse ? <Tag color="cyan">Уже записаны</Tag> : null}
                 </>

@@ -15,6 +15,8 @@ export function AssignmentEditorDrawer({
   onClose,
   onSubmit,
   onPrepareFiles,
+  onClearAttachments,
+  clearingAttachments,
 }) {
   return (
     <Drawer
@@ -46,6 +48,10 @@ export function AssignmentEditorDrawer({
             <InputNumber min={0} max={100} style={{ width: "100%" }} placeholder="Например, 100" />
           </Form.Item>
 
+          <Form.Item name="due_at" label="Дедлайн">
+            <Input type="datetime-local" />
+          </Form.Item>
+
           <Form.Item name="is_published" label="Опубликовать сразу" valuePropName="checked">
             <Switch />
           </Form.Item>
@@ -65,7 +71,14 @@ export function AssignmentEditorDrawer({
               <Typography.Text type="secondary">
                 Можно приложить несколько файлов: PDF, архивы, презентации и документы.
               </Typography.Text>
-              <Button onClick={() => fileInputRef.current?.click()}>Выбрать файлы</Button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <Button onClick={() => fileInputRef.current?.click()}>Выбрать файлы</Button>
+                {isEditing && (attachments || []).length ? (
+                  <Button danger loading={clearingAttachments} onClick={onClearAttachments}>
+                    Удалить файлы
+                  </Button>
+                ) : null}
+              </div>
             </div>
 
             {selectedFiles.length ? (

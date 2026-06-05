@@ -19,6 +19,7 @@ class QuestionCreate(BaseModel):
 
 class QuizCreate(BaseModel):
     title: str = Field(min_length=1, max_length=255)
+    due_at: datetime | None = None
     is_published: bool = False
     questions: list[QuestionCreate] = Field(min_length=1)
 
@@ -44,6 +45,7 @@ class QuizRead(BaseModel):
     id: UUID
     module_id: UUID
     title: str
+    due_at: datetime | None = None
     is_published: bool
     has_attempts: bool = False
     created_at: datetime
@@ -75,6 +77,7 @@ class QuizAttemptRead(BaseModel):
     user_id: UUID
     score: int
     total_questions: int
+    is_late: bool = False
     created_at: datetime
     results: list[QuizQuestionResult] = Field(default_factory=list)
 

@@ -1,7 +1,8 @@
-﻿import React from "react";
+import React from "react";
 import { CommentOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Divider, Empty, Form, Input, List, Space, Typography } from "antd";
 
+import { getUserDisplayName } from "../../lib/userName";
 import { CommentThread } from "./CommentThread";
 
 export function ModuleCommentsPanel({
@@ -16,6 +17,7 @@ export function ModuleCommentsPanel({
   onDelete,
   onSubmit,
   onReply,
+  onReport,
 }) {
   return (
     <Card
@@ -36,7 +38,7 @@ export function ModuleCommentsPanel({
           className="comment-reply-alert"
           type="info"
           showIcon
-          message={`Ответ на комментарий: ${replyTarget.user?.full_name || replyTarget.user?.email}`}
+          message={`Ответ на комментарий: ${getUserDisplayName(replyTarget.user)}`}
           description={replyTarget.content}
           action={
             <Button size="small" onClick={onCancelReply}>
@@ -82,6 +84,7 @@ export function ModuleCommentsPanel({
                 deletingCommentId={deletingCommentId}
                 onDelete={onDelete}
                 onReply={onReply}
+                onReport={onReport}
               />
             </List.Item>
           )}
@@ -90,3 +93,5 @@ export function ModuleCommentsPanel({
     </Card>
   );
 }
+
+

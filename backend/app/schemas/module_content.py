@@ -41,5 +41,11 @@ class ModuleContentRead(BaseModel):
     text_content: str | None
     asset_url: str | None
     source_url: str | None
+    transcript_text: str | None = None
+    transcript_summary: str | None = None
+    transcript_timestamps_json: list[dict] | None = None
+    transcript_status: str | None = None
+    transcript_error: str | None = None
+    transcript_updated_at: datetime | None = None
     created_at: datetime
     updated_at: datetime

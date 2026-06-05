@@ -1,7 +1,7 @@
 ﻿import React from "react";
-import { Col, Form, Row, message } from "antd";
+import { Col, Form, Input, Modal, Row, Select, message } from "antd";
 import { useUnit } from "effector-react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { AppShell } from "../components/AppShell";
 import { ModuleManagementDrawers } from "../components/modules/ModuleManagementDrawers";
@@ -9,7 +9,10 @@ import { ModuleLoadingState, ModuleNotFoundState } from "../components/modules/M
 import { StudentModuleWorkspace } from "../components/modules/StudentModuleWorkspace";
 import { TeacherModuleOverviewCard } from "../components/modules/TeacherModuleOverviewCard";
 import { TeacherModuleWorkspace } from "../components/modules/TeacherModuleWorkspace";
+import { fromDateTimeLocalValue, toDateTimeLocalValue } from "../components/modules/moduleHelpers";
 import { PageBreadcrumbs } from "../components/shared/PageBreadcrumbs";
+import { getErrorMessage } from "../lib/errors";
+import { createReport } from "../api/moderation";
 import { $courses, $user } from "../models/auth";
 import { $selectedCourseModules, loadCourseModulesFx } from "../models/courses";
 import {
@@ -19,6 +22,7 @@ import {
   $assignmentSubmissionUpdatePending,
   $assignmentSubmissionsByAssignment,
   $moduleAssignmentAttachmentPending,
+  $moduleAssignmentAttachmentClearPending,
   $moduleAssignmentCreatePending,
   $moduleAssignmentDeletePending,
   $moduleAssignmentUpdatePending,
@@ -59,6 +63,14 @@ import {
   deleteModuleQuizFx,
   gradeAssignmentSubmissionFx,
   loadAssignmentSubmissionsFx,
+  loadModuleAssignmentsFx,
+  loadModuleAssignmentsQuietFx,
+  loadModuleCommentsFx,
+  loadModuleCommentsQuietFx,
+  loadModuleContentsFx,
+  loadModuleFx,
+  loadModuleQuizFx,
+  loadMyQuizAttemptsFx,
   modulePageOpened,
   modulePageReset,
   quizAttemptRestarted,
@@ -69,6 +81,7 @@ import {
   updateModuleContentFx,
   updateModuleQuizFx,
   uploadAssignmentAttachmentFx,
+  clearAssignmentAttachmentFx,
   uploadModuleFileContentFx,
 } from "../models/modules";
 
@@ -81,6 +94,7 @@ const defaultContentValues = {
 
 const defaultQuizValues = {
   title: "",
+  due_at: "",
   is_published: true,
   questions: [{ content: "", options: ["", ""], correct_option: "", explanation: "" }],
 };
@@ -89,12 +103,16 @@ const defaultAssignmentValues = {
   title: "",
   instructions_markdown: "",
   max_score: 100,
+  due_at: "",
   is_published: true,
 };
+
+const STUDENT_MODULE_REFRESH_MS = 90000;
 
 export function ModuleDetailsPage() {
   const { moduleId } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [
     user,
     myCourses,
@@ -119,6 +137,7 @@ export function ModuleDetailsPage() {
     updatingAssignment,
     deletingAssignment,
     uploadingAssignmentAttachment,
+    clearingAssignmentAttachment,
     creatingAssignmentSubmission,
     updatingAssignmentSubmission,
     deletingAssignmentSubmission,
@@ -141,7 +160,16 @@ export function ModuleDetailsPage() {
     submitUpdateAssignment,
     submitDeleteAssignment,
     submitUploadAssignmentAttachment,
+    submitClearAssignmentAttachment,
     loadAssignmentSubmissions,
+    refreshModule,
+    refreshModuleAssignments,
+    refreshModuleAssignmentsQuiet,
+    refreshModuleComments,
+    refreshModuleCommentsQuiet,
+    refreshModuleContents,
+    refreshModuleQuiz,
+    refreshMyQuizAttempts,
     submitAssignmentSubmission,
     submitAssignmentSubmissionUpdate,
     submitAssignmentSubmissionDelete,
@@ -181,6 +209,7 @@ export function ModuleDetailsPage() {
     $moduleAssignmentUpdatePending,
     $moduleAssignmentDeletePending,
     $moduleAssignmentAttachmentPending,
+    $moduleAssignmentAttachmentClearPending,
     $assignmentSubmissionCreatePending,
     $assignmentSubmissionUpdatePending,
     $assignmentSubmissionDeletePending,
@@ -203,7 +232,16 @@ export function ModuleDetailsPage() {
     updateModuleAssignmentFx,
     deleteModuleAssignmentFx,
     uploadAssignmentAttachmentFx,
+    clearAssignmentAttachmentFx,
     loadAssignmentSubmissionsFx,
+    loadModuleFx,
+    loadModuleAssignmentsFx,
+    loadModuleAssignmentsQuietFx,
+    loadModuleCommentsFx,
+    loadModuleCommentsQuietFx,
+    loadModuleContentsFx,
+    loadModuleQuizFx,
+    loadMyQuizAttemptsFx,
     createAssignmentSubmissionFx,
     updateAssignmentSubmissionFx,
     deleteAssignmentSubmissionFx,
@@ -236,6 +274,9 @@ export function ModuleDetailsPage() {
   const [deletingCommentId, setDeletingCommentId] = React.useState(null);
   const [deletingContentId, setDeletingContentId] = React.useState(null);
   const [deletingAssignmentId, setDeletingAssignmentId] = React.useState(null);
+  const [reportModalOpen, setReportModalOpen] = React.useState(false);
+  const [reportTargetComment, setReportTargetComment] = React.useState(null);
+  const [reportSubmitting, setReportSubmitting] = React.useState(false);
 
   const contentFileInputRef = React.useRef(null);
   const assignmentFileInputRef = React.useRef(null);
@@ -245,6 +286,7 @@ export function ModuleDetailsPage() {
   const [commentForm] = Form.useForm();
   const [quizForm] = Form.useForm();
   const [quizAnswerForm] = Form.useForm();
+  const [reportForm] = Form.useForm();
   const contentType = Form.useWatch("content_type", contentForm);
 
   React.useEffect(() => {
@@ -261,6 +303,9 @@ export function ModuleDetailsPage() {
   const isTeacher = user?.role === "teacher";
   const isAdmin = user?.role === "admin";
   const canManageModule = isAdmin || (isTeacher && myCourses.some((course) => course.id === module?.course_id));
+  const allowedTabs = new Set(["content", "assignment", "quiz", "comments"]);
+  const requestedTab = searchParams.get("tab");
+  const activeStudentTab = allowedTabs.has(requestedTab) ? requestedTab : "content";
   const canTakeQuiz = Boolean(quiz?.id) && !canManageModule;
   const studentCourseModules = courseModules.filter((courseModule) => courseModule.is_published);
   const currentModuleIndex = studentCourseModules.findIndex((courseModule) => courseModule.id === module?.id);
@@ -276,12 +321,22 @@ export function ModuleDetailsPage() {
 
   React.useEffect(() => {
     if (!canTakeQuiz || !quiz?.questions?.length) return;
-    const answers = {};
+
+    const existingAnswers = quizAnswerForm.getFieldsValue(true)?.answers || {};
+    const nextAnswers = { ...existingAnswers };
+    let changed = false;
+
     quiz.questions.forEach((question) => {
-      answers[question.id] = undefined;
+      if (!(question.id in nextAnswers)) {
+        nextAnswers[question.id] = undefined;
+        changed = true;
+      }
     });
-    quizAnswerForm.setFieldsValue({ answers });
-  }, [canTakeQuiz, quiz, quizAnswerForm]);
+
+    if (changed) {
+      quizAnswerForm.setFieldsValue({ answers: nextAnswers });
+    }
+  }, [canTakeQuiz, quiz?.id, quiz?.questions, quizAnswerForm]);
 
   React.useEffect(() => {
     if (!assignments.length) return;
@@ -289,6 +344,51 @@ export function ModuleDetailsPage() {
       loadAssignmentSubmissions({ assignmentId: assignment.id, canManage: canManageModule }).catch(() => {});
     });
   }, [assignments, canManageModule, loadAssignmentSubmissions]);
+
+  React.useEffect(() => {
+    if (!moduleId || canManageModule) return undefined;
+
+    let cancelled = false;
+
+    const refreshStudentModuleState = () => {
+      if (cancelled || document.visibilityState !== "visible") {
+        return;
+      }
+
+      refreshModuleAssignmentsQuiet(moduleId)
+        .then((nextAssignments) => {
+          nextAssignments.forEach((assignment) => {
+            loadAssignmentSubmissions({ assignmentId: assignment.id, canManage: false }).catch(() => {});
+          });
+        })
+        .catch(() => {});
+      refreshModuleCommentsQuiet(moduleId).catch(() => {});
+    };
+
+    const intervalId = window.setInterval(refreshStudentModuleState, STUDENT_MODULE_REFRESH_MS);
+    const handleFocus = () => refreshStudentModuleState();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshStudentModuleState();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [
+    canManageModule,
+    loadAssignmentSubmissions,
+    moduleId,
+    refreshModuleAssignmentsQuiet,
+    refreshModuleCommentsQuiet,
+  ]);
 
   function resetContentFileInput() {
     if (contentFileInputRef.current) {
@@ -337,6 +437,7 @@ export function ModuleDetailsPage() {
             title: assignment.title,
             instructions_markdown: assignment.instructions_markdown,
             max_score: assignment.max_score,
+            due_at: toDateTimeLocalValue(assignment.due_at),
             is_published: assignment.is_published,
           }
         : defaultAssignmentValues,
@@ -369,6 +470,7 @@ export function ModuleDetailsPage() {
       isEditMode && quiz
         ? {
             title: quiz.title,
+            due_at: toDateTimeLocalValue(quiz.due_at),
             is_published: quiz.is_published,
             questions: quiz.questions.map((question) => ({
               content: question.content,
@@ -450,16 +552,17 @@ export function ModuleDetailsPage() {
       message.success(editingContent ? "Материал обновлен" : "Контент модуля добавлен");
       closeContentDrawer();
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось сохранить контент");
+      message.error(getErrorMessage(error, "Не удалось сохранить контент"));
     }
   }
 
   async function handleSaveAssignment(values) {
     if (!moduleId) return;
     try {
+      const payload = { ...values, due_at: fromDateTimeLocalValue(values.due_at) };
       const assignmentRecord = editingAssignment
-        ? await submitUpdateAssignment({ assignmentId: editingAssignment.id, payload: values })
-        : await submitCreateAssignment({ moduleId, payload: values });
+        ? await submitUpdateAssignment({ assignmentId: editingAssignment.id, payload })
+        : await submitCreateAssignment({ moduleId, payload });
 
       if (pendingAssignmentFiles.length && assignmentRecord?.id) {
         await submitUploadAssignmentAttachment({ assignmentId: assignmentRecord.id, files: pendingAssignmentFiles });
@@ -468,7 +571,7 @@ export function ModuleDetailsPage() {
       message.success(editingAssignment ? "Задание обновлено" : "Задание создано");
       closeAssignmentDrawer();
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось сохранить задание");
+      message.error(getErrorMessage(error, "Не удалось сохранить задание"));
     }
   }
 
@@ -479,7 +582,7 @@ export function ModuleDetailsPage() {
       await submitContentDelete({ contentId: content.id, moduleId });
       message.success("Материал удален");
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось удалить материал");
+      message.error(getErrorMessage(error, "Не удалось удалить материал"));
     } finally {
       setDeletingContentId(null);
     }
@@ -492,7 +595,7 @@ export function ModuleDetailsPage() {
       await submitDeleteAssignment({ assignmentId: assignment.id, moduleId });
       message.success("Задание удалено");
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось удалить задание");
+      message.error(getErrorMessage(error, "Не удалось удалить задание"));
     } finally {
       setDeletingAssignmentId(null);
     }
@@ -538,7 +641,7 @@ export function ModuleDetailsPage() {
       commentForm.resetFields();
       setReplyTarget(null);
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось отправить комментарий");
+      message.error(getErrorMessage(error, "Не удалось отправить комментарий"));
     }
   }
 
@@ -552,9 +655,55 @@ export function ModuleDetailsPage() {
         setReplyTarget(null);
       }
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось удалить комментарий");
+      message.error(getErrorMessage(error, "Не удалось удалить комментарий"));
     } finally {
       setDeletingCommentId(null);
+    }
+  }
+
+  async function handleClearAssignmentAttachments() {
+    if (!editingAssignment?.id) return;
+    try {
+      const assignmentRecord = await submitClearAssignmentAttachment({ assignmentId: editingAssignment.id });
+      setEditingAssignment(assignmentRecord);
+      setPendingAssignmentFiles([]);
+      resetAssignmentFileInput();
+      message.success("Файлы задания удалены");
+    } catch (error) {
+      message.error(getErrorMessage(error, "Не удалось удалить файлы задания"));
+    }
+  }
+
+  function handleReportComment(comment) {
+    setReportTargetComment(comment);
+    reportForm.setFieldsValue({
+      category: "abuse",
+      reason: "Оскорбление, спам или неуместный контент",
+      details: "",
+    });
+    setReportModalOpen(true);
+  }
+
+  async function submitCommentReport() {
+    if (!reportTargetComment) return;
+    try {
+      const values = await reportForm.validateFields();
+      setReportSubmitting(true);
+      await createReport({
+        target_type: "comment",
+        comment_id: reportTargetComment.id,
+        reason: values.reason,
+        category: values.category,
+        details: values.details || null,
+      });
+      message.success("Жалоба отправлена модератору");
+      setReportModalOpen(false);
+      setReportTargetComment(null);
+      reportForm.resetFields();
+    } catch (error) {
+      message.error(getErrorMessage(error, "Не удалось отправить жалобу"));
+    } finally {
+      setReportSubmitting(false);
     }
   }
 
@@ -563,6 +712,7 @@ export function ModuleDetailsPage() {
     try {
       const payload = {
         title: values.title,
+        due_at: fromDateTimeLocalValue(values.due_at),
         is_published: values.is_published,
         questions: (values.questions || []).map((question, questionIndex) => ({
           content: question.content,
@@ -581,7 +731,7 @@ export function ModuleDetailsPage() {
       message.success(editingQuiz ? "Квиз обновлен" : "Квиз создан");
       closeQuizDrawer();
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось сохранить квиз");
+      message.error(getErrorMessage(error, "Не удалось сохранить квиз"));
     }
   }
 
@@ -591,7 +741,7 @@ export function ModuleDetailsPage() {
       await submitQuizDelete({ quizId: quiz.id, moduleId });
       message.success("Квиз удален");
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось удалить квиз");
+      message.error(getErrorMessage(error, "Не удалось удалить квиз"));
     }
   }
 
@@ -607,7 +757,7 @@ export function ModuleDetailsPage() {
       await submitQuizAttempt({ quizId: quiz.id, payload });
       message.success("Попытка сохранена");
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось отправить ответы");
+      message.error(getErrorMessage(error, "Не удалось отправить ответы"));
     }
   }
 
@@ -617,7 +767,7 @@ export function ModuleDetailsPage() {
       loadAssignmentSubmissions({ assignmentId: submission.assignment_id, canManage: true }).catch(() => {});
       message.success("Оценка сохранена");
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось сохранить оценку");
+      message.error(getErrorMessage(error, "Не удалось сохранить оценку"));
     }
   }
 
@@ -630,6 +780,12 @@ export function ModuleDetailsPage() {
     quizAnswerForm.setFieldsValue({ answers });
     restartQuizAttempt();
     message.info("Можно начать новую попытку");
+  }
+
+  function handleStudentTabChange(tabKey) {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("tab", tabKey);
+    setSearchParams(nextParams, { replace: true });
   }
 
   if (modulePending && !module) {
@@ -685,7 +841,7 @@ export function ModuleDetailsPage() {
                 assignments={assignments}
                 submissionsByAssignment={assignmentSubmissionsByAssignment}
                 assignmentsPending={assignmentsPending}
-                assignmentSaving={creatingAssignment || updatingAssignment || uploadingAssignmentAttachment}
+                assignmentSaving={creatingAssignment || updatingAssignment || uploadingAssignmentAttachment || clearingAssignmentAttachment}
                 assignmentDeletingId={deletingAssignmentId}
                 submissionPending={creatingAssignmentSubmission || updatingAssignmentSubmission || deletingAssignmentSubmission}
                 submissionUpdating={updatingAssignmentSubmission}
@@ -708,6 +864,7 @@ export function ModuleDetailsPage() {
                 onDeleteComment={handleDeleteComment}
                 onSubmitComment={handleCreateComment}
                 onReply={setReplyTarget}
+                onReportComment={handleReportComment}
                 quiz={quiz}
                 quizPending={quizPending}
                 attempts={attempts}
@@ -748,6 +905,7 @@ export function ModuleDetailsPage() {
               onCommentDelete={handleDeleteComment}
               onCommentSubmit={handleCreateComment}
               onReply={setReplyTarget}
+              onReportComment={handleReportComment}
               onStudentAssignmentSubmit={handleStudentAssignmentSubmit}
               onStudentAssignmentUpdate={handleStudentAssignmentUpdate}
               onStudentAssignmentDelete={handleStudentAssignmentDelete}
@@ -762,6 +920,8 @@ export function ModuleDetailsPage() {
               onRestartAttempt={handleRestartQuizAttempt}
               previousModule={previousModule}
               nextModule={nextModule}
+              activeTab={activeStudentTab}
+              onTabChange={handleStudentTabChange}
             />
           </Col>
         )}
@@ -782,12 +942,14 @@ export function ModuleDetailsPage() {
         assignmentDrawerOpen={assignmentDrawerOpen}
         assignmentForm={assignmentForm}
         editingAssignment={editingAssignment}
-        assignmentSaving={creatingAssignment || updatingAssignment || uploadingAssignmentAttachment}
+        assignmentSaving={creatingAssignment || updatingAssignment || uploadingAssignmentAttachment || clearingAssignmentAttachment}
         pendingAssignmentFiles={pendingAssignmentFiles}
         assignmentFileInputRef={assignmentFileInputRef}
         onCloseAssignmentDrawer={closeAssignmentDrawer}
         onSaveAssignment={handleSaveAssignment}
         onPrepareAssignmentFiles={prepareAssignmentFiles}
+        onClearAssignmentAttachments={handleClearAssignmentAttachments}
+        clearingAssignmentAttachments={clearingAssignmentAttachment}
         submissionsDrawerOpen={submissionsDrawerOpen}
         reviewAssignment={reviewAssignment}
         assignmentSubmissions={reviewAssignment ? assignmentSubmissionsByAssignment[reviewAssignment.id] || [] : []}
@@ -802,6 +964,39 @@ export function ModuleDetailsPage() {
         onCloseQuizDrawer={closeQuizDrawer}
         onSaveQuiz={handleSaveQuiz}
       />
+      <Modal
+        title="Пожаловаться на комментарий"
+        open={reportModalOpen}
+        okText="Отправить жалобу"
+        cancelText="Отмена"
+        confirmLoading={reportSubmitting}
+        onOk={submitCommentReport}
+        onCancel={() => {
+          setReportModalOpen(false);
+          setReportTargetComment(null);
+          reportForm.resetFields();
+        }}
+      >
+        <Form form={reportForm} layout="vertical">
+          <Form.Item name="category" label="Категория" rules={[{ required: true, message: "Выберите категорию" }]}>
+            <Select
+              options={[
+                { value: "abuse", label: "Оскорбления/токсичность" },
+                { value: "spam", label: "Спам" },
+                { value: "misinformation", label: "Недостоверный контент" },
+                { value: "offtopic", label: "Не по теме" },
+                { value: "other", label: "Другое" },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="reason" label="Причина" rules={[{ required: true, message: "Укажите причину" }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="details" label="Детали (необязательно)">
+            <Input.TextArea rows={4} />
+          </Form.Item>
+        </Form>
+      </Modal>
     </AppShell>
   );
 }

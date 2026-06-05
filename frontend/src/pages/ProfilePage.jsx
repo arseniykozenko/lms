@@ -4,6 +4,9 @@ import { Button, Card, Col, Form, Input, Row, Statistic, message } from "antd";
 import { useUnit } from "effector-react";
 
 import { AppShell } from "../components/AppShell";
+import { getErrorMessage } from "../lib/errors";
+import { isTeacherRole, roleLabel } from "../lib/roles";
+import { getUserDisplayName } from "../lib/userName";
 import { ProfileHeroCard } from "../components/profile/ProfileHeroCard";
 import { ProfilePhotoEditor } from "../components/profile/ProfilePhotoEditor";
 import {
@@ -46,8 +49,8 @@ export function ProfilePage() {
     try {
       await saveProfile(values);
       message.success("Профиль обновлен");
-    } catch {
-      message.error("Не удалось обновить профиль");
+    } catch (error) {
+      message.error(getErrorMessage(error, "Не удалось обновить профиль"));
     }
   }
 
@@ -77,8 +80,8 @@ export function ProfilePage() {
       }
 
       message.success("Фото профиля обновлено");
-    } catch {
-      message.error("Не удалось загрузить фото");
+    } catch (error) {
+      message.error(getErrorMessage(error, "Не удалось загрузить фото"));
     }
   }
 
@@ -101,7 +104,7 @@ export function ProfilePage() {
     preparePhoto(imageItem.getAsFile());
   }
 
-  const isTeacher = user?.role === "teacher";
+  const isTeacher = isTeacherRole(user?.role);
   const displayPhoto = previewUrl || user?.profile_photo_url || undefined;
 
   return (
@@ -109,17 +112,17 @@ export function ProfilePage() {
       title="Профиль"
       subtitle={
         isTeacher
-          ? "Сформируйте профессиональный образ преподавателя для студентов."
-          : "Поддерживайте учебный профиль в актуальном и аккуратном виде."
+          ? "Управляйте преподавательским профилем и публичной информацией."
+          : "Управляйте персональными данными и видимостью профиля."
       }
     >
       <Row gutter={[20, 20]}>
         <Col xs={24} xl={8}>
           <ProfileHeroCard
             displayPhoto={displayPhoto}
-            fullName={user?.full_name}
+            fullName={getUserDisplayName(user)}
             email={user?.email}
-            isTeacher={isTeacher}
+            role={user?.role}
           />
         </Col>
 
@@ -144,12 +147,15 @@ export function ProfilePage() {
               <Col xs={24} md={14}>
                 <Form
                   layout="vertical"
-                  initialValues={{ full_name: user?.full_name }}
+                  initialValues={{ first_name: user?.first_name, second_name: user?.second_name }}
                   onFinish={handleSave}
                   key={user?.id || user?.email}
                 >
-                  <Form.Item name="full_name" label="ФИО" rules={[{ required: true, message: "Введите ваше имя" }]}> 
-                    <Input prefix={<UserOutlined />} placeholder="Ваше полное имя" />
+                  <Form.Item name="first_name" label="Имя" rules={[{ required: true, message: "Введите имя" }]}>
+                    <Input prefix={<UserOutlined />} placeholder="Ваше имя" />
+                  </Form.Item>
+                  <Form.Item name="second_name" label="Фамилия" rules={[{ required: true, message: "Введите фамилию" }]}>
+                    <Input prefix={<UserOutlined />} placeholder="Ваша фамилия" />
                   </Form.Item>
 
                   <Button type="primary" htmlType="submit" loading={saving}>
@@ -173,7 +179,7 @@ export function ProfilePage() {
         </Col>
         <Col xs={24} md={8}>
           <Card className="metric-card">
-            <Statistic title="Роль аккаунта" value={isTeacher ? "Преподаватель" : "Студент"} />
+            <Statistic title="Роль аккаунта" value={roleLabel(user?.role)} />
           </Card>
         </Col>
       </Row>

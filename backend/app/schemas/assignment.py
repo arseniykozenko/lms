@@ -11,6 +11,7 @@ class AssignmentCreate(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     instructions_markdown: str = Field(min_length=1)
     max_score: int | None = Field(default=None, ge=0, le=100)
+    due_at: datetime | None = None
     is_published: bool = True
 
 
@@ -18,6 +19,7 @@ class AssignmentUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     instructions_markdown: str | None = Field(default=None, min_length=1)
     max_score: int | None = Field(default=None, ge=0, le=100)
+    due_at: datetime | None = None
     is_published: bool | None = None
 
 
@@ -31,6 +33,7 @@ class AssignmentRead(BaseModel):
     attachment_url: str | None = None
     attachment_name: str | None = None
     max_score: int | None = None
+    due_at: datetime | None = None
     is_published: bool
     has_submissions: bool = False
     attachments: list["AssignmentAttachmentRead"] = []
@@ -71,6 +74,7 @@ class AssignmentSubmissionRead(BaseModel):
     feedback_markdown: str | None = None
     submitted_at: datetime
     graded_at: datetime | None = None
+    is_late: bool = False
     created_at: datetime
     updated_at: datetime
     student: UserRead | None = None

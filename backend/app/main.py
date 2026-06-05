@@ -8,10 +8,12 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
 from app.core.config import settings
+from app.core.db.session import init_db
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    init_db()
     yield
 
 

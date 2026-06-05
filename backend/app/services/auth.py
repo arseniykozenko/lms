@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -16,13 +18,15 @@ class AuthService:
         self.users = UserRepository(db)
 
     def register(self, payload: UserCreate) -> TokenResponse:
-        existing = self.users.get_by_email(payload.email)
+        normalized_email = str(payload.email).strip().lower()
+        existing = self.users.get_by_email(normalized_email)
         if existing is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User with this email already exists")
 
         user = self.users.create(
-            full_name=payload.full_name,
-            email=payload.email,
+            first_name=payload.first_name,
+            second_name=payload.second_name,
+            email=normalized_email,
             password_hash=hash_password(payload.password),
             role=payload.role,
         )
@@ -31,10 +35,15 @@ class AuthService:
         return self._build_auth_response(user)
 
     def login(self, payload: LoginRequest) -> TokenResponse:
-        user = self.users.get_by_email(payload.email)
+        normalized_email = str(payload.email).strip().lower()
+        user = self.users.get_by_email(normalized_email)
         if user is None or not verify_password(payload.password, user.password_hash):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
         if not user.is_active:
+            if user.blocked_until is not None and user.blocked_until > datetime.now(UTC):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is temporarily blocked")
+            if user.blocked_until is None and user.blocked_reason:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is blocked")
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive user")
 
         return self._build_auth_response(user)

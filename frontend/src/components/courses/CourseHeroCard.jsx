@@ -7,11 +7,19 @@ export function CourseHeroCard({
   course,
   canManageCourse,
   alreadyEnrolled,
+  canEnrollCourse = false,
+  roleContextTag = null,
+  roleContextHint = "",
   enrolling,
   moduleCount,
   publishedModuleCount,
+  studentCount = 0,
+  averageStudentProgress = 0,
+  completedStudentCount = 0,
+  progressPageHref,
   onEnroll,
   onCreateModule,
+  onOpenStudents,
 }) {
   return (
     <Card
@@ -32,12 +40,10 @@ export function CourseHeroCard({
       }
     >
       <Space className="course-card-tags" wrap>
-        <Tag color={course?.is_published ? "green" : "orange"}>
-          {course?.is_published ? "Опубликован" : "Черновик"}
-        </Tag>
-        <Tag color="blue">{course?.is_free ? "Бесплатно" : "Платно"}</Tag>
+        <Tag color={course?.is_published ? "green" : "orange"}>{course?.is_published ? "Опубликован" : "Черновик"}</Tag>
         {canManageCourse ? <Tag color="gold">Ваш курс</Tag> : null}
         {alreadyEnrolled && !canManageCourse ? <Tag color="cyan">Вы записаны</Tag> : null}
+        {roleContextTag ? <Tag color={roleContextTag.color}>{roleContextTag.label}</Tag> : null}
       </Space>
 
       <Typography.Paragraph className="course-hero-description">
@@ -55,6 +61,15 @@ export function CourseHeroCard({
           <div className="course-hero-metric">
             <Statistic title="Черновиков" value={Math.max(moduleCount - publishedModuleCount, 0)} prefix={<CheckCircleOutlined />} />
           </div>
+          <div className="course-hero-metric">
+            <Statistic title="Студентов" value={studentCount} prefix={<BookOutlined />} />
+          </div>
+          <div className="course-hero-metric">
+            <Statistic title="Средний прогресс" value={`${averageStudentProgress}%`} prefix={<EyeOutlined />} />
+          </div>
+          <div className="course-hero-metric">
+            <Statistic title="Завершили курс" value={completedStudentCount} prefix={<CheckCircleOutlined />} />
+          </div>
         </div>
       ) : null}
 
@@ -62,23 +77,33 @@ export function CourseHeroCard({
         <Button>
           <Link to="/courses">Назад в каталог</Link>
         </Button>
-        {!canManageCourse && !alreadyEnrolled ? (
+        {!canManageCourse && canEnrollCourse ? (
           <Button type="primary" loading={enrolling} onClick={onEnroll}>
             Записаться на курс
           </Button>
         ) : null}
         {canManageCourse ? (
-          <Button type="primary" icon={<PlusOutlined />} onClick={onCreateModule}>
-            Добавить модуль
-          </Button>
+          <>
+            <Button type="primary" icon={<PlusOutlined />} onClick={onCreateModule}>
+              Добавить модуль
+            </Button>
+            {progressPageHref ? (
+              <Button>
+                <Link to={progressPageHref}>Страница прогресса</Link>
+              </Button>
+            ) : null}
+            <Button onClick={onOpenStudents}>Студенты и прогресс</Button>
+          </>
         ) : null}
       </Space>
 
       {canManageCourse ? (
         <Typography.Text className="course-hero-note">
-          Управляйте структурой курса сверху вниз: создавайте модули, публикуйте их и переходите внутрь для наполнения материалами, заданиями и тестами.
+          Управляйте структурой курса сверху вниз: создавайте модули, публикуйте их и переходите внутрь для наполнения
+          материалами, заданиями и тестами. В модалке студентов доступен прогресс каждого записанного студента.
         </Typography.Text>
       ) : null}
+      {!canManageCourse && roleContextHint ? <Typography.Text type="secondary">{roleContextHint}</Typography.Text> : null}
     </Card>
   );
 }

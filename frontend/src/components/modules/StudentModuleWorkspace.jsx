@@ -31,6 +31,7 @@ export function StudentModuleWorkspace({
   onCommentDelete,
   onCommentSubmit,
   onReply,
+  onReportComment,
   onStudentAssignmentSubmit,
   onStudentAssignmentUpdate,
   onStudentAssignmentDelete,
@@ -45,6 +46,8 @@ export function StudentModuleWorkspace({
   onRestartAttempt,
   previousModule,
   nextModule,
+  activeTab = "content",
+  onTabChange = () => {},
 }) {
   const [navOpen, setNavOpen] = React.useState(false);
 
@@ -114,6 +117,7 @@ export function StudentModuleWorkspace({
           onDelete={onCommentDelete}
           onSubmit={onCommentSubmit}
           onReply={onReply}
+          onReport={onReportComment}
         />
       ),
     },
@@ -161,10 +165,12 @@ export function StudentModuleWorkspace({
         modules={courseModules}
         currentModuleId={module?.id}
         contents={contents}
+        moduleBaseRoute={module?.id ? `/modules/${module.id}` : null}
+        activeModuleTab={activeTab}
       />
 
       <Card className="panel-card student-module-tabs-card">
-        <Tabs defaultActiveKey="content" items={tabItems} />
+        <Tabs activeKey={activeTab} onChange={onTabChange} items={tabItems} />
       </Card>
     </div>
   );

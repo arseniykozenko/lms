@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
@@ -19,21 +20,28 @@ from app.schemas.quiz import (
 )
 from app.schemas.user import UserRead
 from app.services.courses import CourseService, get_course_service
+from app.services.notifications import NotificationService, get_notification_service
 
 
 class QuizService:
-    def __init__(self, db: Session, courses: CourseService) -> None:
+    def __init__(self, db: Session, courses: CourseService, notifications: NotificationService) -> None:
         self.db = db
         self.quizzes = QuizRepository(db)
         self.modules = ModuleRepository(db)
         self.courses = courses
+        self.notifications = notifications
 
     def create_quiz(self, module_id: UUID, payload: QuizCreate, current_user: UserRead) -> QuizRead:
         module = self._get_module_or_404(module_id)
-        self._ensure_manage_course(module.course.author_id, current_user)
+        self.courses.ensure_can_manage_course(module.course_id, current_user)
         if self.quizzes.get_by_module_id(module_id) is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quiz already exists for this module")
-        quiz = Quiz(module_id=module_id, title=payload.title, is_published=payload.is_published)
+        quiz = Quiz(
+            module_id=module_id,
+            title=payload.title,
+            due_at=self._normalize_datetime(payload.due_at),
+            is_published=payload.is_published,
+        )
         self.quizzes.create(quiz)
         for index, question_payload in enumerate(payload.questions, start=1):
             if question_payload.correct_option not in question_payload.options:
@@ -54,6 +62,13 @@ class QuizService:
         self.db.commit()
         stored = self.quizzes.get_by_module_id(module_id)
         assert stored is not None
+        if stored.is_published:
+            self.notifications.create_quiz_published_notifications(
+                module.course_id,
+                module_id=module.id,
+                quiz_id=stored.id,
+                quiz_title=stored.title,
+            )
         return self._to_quiz_read(stored, include_correct_option=True)
 
     def get_module_quiz(self, module_id: UUID, current_user: UserRead) -> QuizRead:
@@ -63,25 +78,42 @@ class QuizService:
         quiz = self.quizzes.get_by_module_id(module_id)
         if quiz is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quiz not found")
-        if not quiz.is_published and current_user.role != UserRole.ADMIN and quiz.module.course.author_id != current_user.id:
+        if (
+            not quiz.is_published
+            and current_user.role != UserRole.ADMIN
+            and quiz.module.course.author_id != current_user.id
+            and not self.courses.is_course_collaborator(quiz.module.course_id, current_user.id)
+        ):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Quiz is not published")
         can_manage = current_user.role == UserRole.ADMIN or quiz.module.course.author_id == current_user.id
+        if current_user.role == UserRole.TEACHER and self.courses.is_course_collaborator(quiz.module.course_id, current_user.id):
+            can_manage = True
         return self._to_quiz_read(quiz, include_correct_option=can_manage)
 
     def get_quiz(self, quiz_id: UUID, current_user: UserRead) -> QuizRead:
         quiz = self._get_quiz_or_404(quiz_id)
         if not self.courses.has_course_access(quiz.module.course_id, current_user):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are not enrolled in this course")
-        if not quiz.is_published and current_user.role != UserRole.ADMIN and quiz.module.course.author_id != current_user.id:
+        if (
+            not quiz.is_published
+            and current_user.role != UserRole.ADMIN
+            and quiz.module.course.author_id != current_user.id
+            and not self.courses.is_course_collaborator(quiz.module.course_id, current_user.id)
+        ):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Quiz is not published")
         can_manage = current_user.role == UserRole.ADMIN or quiz.module.course.author_id == current_user.id
+        if current_user.role == UserRole.TEACHER and self.courses.is_course_collaborator(quiz.module.course_id, current_user.id):
+            can_manage = True
         return self._to_quiz_read(quiz, include_correct_option=can_manage)
 
     def update_quiz(self, quiz_id: UUID, payload: QuizUpdate, current_user: UserRead) -> QuizRead:
         quiz = self._get_quiz_or_404(quiz_id)
-        self._ensure_manage_course(quiz.module.course.author_id, current_user)
+        self.courses.ensure_can_manage_course(quiz.module.course_id, current_user)
+        previous_due_at = quiz.due_at
+        was_published = quiz.is_published
         questions_changed = self._questions_changed(quiz, payload)
         quiz.title = payload.title
+        quiz.due_at = self._normalize_datetime(payload.due_at)
         quiz.is_published = payload.is_published
         if questions_changed:
             self._ensure_quiz_questions_mutable(quiz)
@@ -105,11 +137,29 @@ class QuizService:
                 )
         self.db.commit()
         self.db.refresh(quiz)
+        if quiz.is_published and not was_published:
+            self.notifications.create_quiz_published_notifications(
+                quiz.module.course_id,
+                module_id=quiz.module_id,
+                quiz_id=quiz.id,
+                quiz_title=quiz.title,
+            )
+        if quiz.is_published and previous_due_at != quiz.due_at:
+            self.notifications.create_deadline_changed_notifications(
+                quiz.module.course_id,
+                module_id=quiz.module_id,
+                entity_kind="теста",
+                entity_id=quiz.id,
+                item_title=quiz.title,
+                previous_due_at=previous_due_at,
+                due_at=quiz.due_at,
+            )
         return self._to_quiz_read(quiz, include_correct_option=True)
 
     def delete_quiz(self, quiz_id: UUID, current_user: UserRead) -> None:
         quiz = self._get_quiz_or_404(quiz_id)
-        self._ensure_manage_course(quiz.module.course.author_id, current_user)
+        self.courses.ensure_can_manage_course(quiz.module.course_id, current_user)
+        self.courses.ensure_can_delete_course_resources(quiz.module.course_id, current_user)
         self._ensure_quiz_questions_mutable(quiz)
         self.db.delete(quiz)
         self.db.commit()
@@ -173,6 +223,7 @@ class QuizService:
             user_id=attempt.user_id,
             score=attempt.score,
             total_questions=attempt.total_questions,
+            is_late=bool(quiz.due_at is not None and attempt.created_at > quiz.due_at),
             created_at=attempt.created_at,
             results=results,
         )
@@ -195,12 +246,6 @@ class QuizService:
         if quiz is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quiz not found")
         return quiz
-
-    def _ensure_manage_course(self, author_id: UUID, current_user: UserRead) -> None:
-        if current_user.role == UserRole.ADMIN:
-            return
-        if current_user.role != UserRole.TEACHER or author_id != current_user.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
 
     def _ensure_quiz_questions_mutable(self, quiz: Quiz) -> None:
         if quiz.attempts:
@@ -238,6 +283,7 @@ class QuizService:
             id=quiz.id,
             module_id=quiz.module_id,
             title=quiz.title,
+            due_at=quiz.due_at,
             is_published=quiz.is_published,
             has_attempts=bool(quiz.attempts),
             created_at=quiz.created_at,
@@ -266,6 +312,7 @@ class QuizService:
             user_id=attempt.user_id,
             score=attempt.score,
             total_questions=attempt.total_questions,
+            is_late=bool(attempt.quiz.due_at is not None and attempt.created_at > attempt.quiz.due_at),
             created_at=attempt.created_at,
             results=[
                 {
@@ -283,9 +330,17 @@ class QuizService:
         for attempt in attempts[3:]:
             self.db.delete(attempt)
 
+    def _normalize_datetime(self, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
 
 def get_quiz_service(
     db: Session = Depends(get_db),
     courses: CourseService = Depends(get_course_service),
+    notifications: NotificationService = Depends(get_notification_service),
 ) -> QuizService:
-    return QuizService(db, courses)
+    return QuizService(db, courses, notifications)

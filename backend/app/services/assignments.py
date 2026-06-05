@@ -5,6 +5,7 @@ from fastapi import Depends, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.db.session import get_db
+from app.lib.user_name import get_user_display_name
 from app.models.assignment import (
     Assignment,
     AssignmentAttachment,
@@ -27,13 +28,15 @@ from app.schemas.assignment import (
 from app.schemas.user import UserRead
 from app.services.courses import CourseService, get_course_service
 from app.services.media import MediaService, get_media_service
+from app.services.notifications import NotificationService, get_notification_service
 
 
 class AssignmentService:
-    def __init__(self, db: Session, courses: CourseService, media: MediaService) -> None:
+    def __init__(self, db: Session, courses: CourseService, media: MediaService, notifications: NotificationService) -> None:
         self.db = db
         self.courses = courses
         self.media = media
+        self.notifications = notifications
         self.modules = ModuleRepository(db)
         self.assignments = AssignmentRepository(db)
         self.submissions = AssignmentSubmissionRepository(db)
@@ -45,7 +48,10 @@ class AssignmentService:
         visible = [
             item
             for item in items
-            if item.is_published or current_user.role == UserRole.ADMIN or item.module.course.author_id == current_user.id
+            if item.is_published
+            or current_user.role == UserRole.ADMIN
+            or item.module.course.author_id == current_user.id
+            or self.courses.is_course_collaborator(item.module.course_id, current_user.id)
         ]
         return [self._to_assignment_read(item) for item in visible]
 
@@ -56,11 +62,19 @@ class AssignmentService:
             title=payload.title.strip(),
             instructions_markdown=payload.instructions_markdown.strip(),
             max_score=payload.max_score,
+            due_at=self._normalize_datetime(payload.due_at),
             is_published=payload.is_published,
         )
         self.assignments.create(assignment)
         self.db.commit()
         self.db.refresh(assignment)
+        if assignment.is_published:
+            self.notifications.create_assignment_published_notifications(
+                module.course_id,
+                module_id=module.id,
+                assignment_id=assignment.id,
+                assignment_title=assignment.title,
+            )
         return self._to_assignment_read(assignment)
 
     def get_assignment(self, assignment_id: UUID, current_user: UserRead) -> AssignmentRead:
@@ -70,20 +84,42 @@ class AssignmentService:
 
     def update_assignment(self, assignment_id: UUID, payload: AssignmentUpdate, current_user: UserRead) -> AssignmentRead:
         assignment = self._get_assignment_for_management(assignment_id, current_user)
+        previous_due_at = assignment.due_at
+        was_published = assignment.is_published
         if "title" in payload.model_fields_set and payload.title is not None:
             assignment.title = payload.title.strip()
         if "instructions_markdown" in payload.model_fields_set and payload.instructions_markdown is not None:
             assignment.instructions_markdown = payload.instructions_markdown.strip()
         if "max_score" in payload.model_fields_set:
             assignment.max_score = payload.max_score
+        if "due_at" in payload.model_fields_set:
+            assignment.due_at = self._normalize_datetime(payload.due_at)
         if "is_published" in payload.model_fields_set and payload.is_published is not None:
             assignment.is_published = payload.is_published
         self.db.commit()
         self.db.refresh(assignment)
+        if assignment.is_published and not was_published:
+            self.notifications.create_assignment_published_notifications(
+                assignment.module.course_id,
+                module_id=assignment.module_id,
+                assignment_id=assignment.id,
+                assignment_title=assignment.title,
+            )
+        if assignment.is_published and previous_due_at != assignment.due_at:
+            self.notifications.create_deadline_changed_notifications(
+                assignment.module.course_id,
+                module_id=assignment.module_id,
+                entity_kind="задания",
+                entity_id=assignment.id,
+                item_title=assignment.title,
+                previous_due_at=previous_due_at,
+                due_at=assignment.due_at,
+            )
         return self._to_assignment_read(assignment)
 
     def delete_assignment(self, assignment_id: UUID, current_user: UserRead) -> None:
         assignment = self._get_assignment_for_management(assignment_id, current_user)
+        self.courses.ensure_can_delete_course_resources(assignment.module.course_id, current_user)
         self.assignments.delete(assignment)
         self.db.commit()
 
@@ -101,13 +137,22 @@ class AssignmentService:
         self.db.refresh(assignment)
         return self._to_assignment_read(assignment)
 
+    def clear_assignment_attachments(self, assignment_id: UUID, current_user: UserRead) -> AssignmentRead:
+        assignment = self._get_assignment_for_management(assignment_id, current_user)
+        assignment.attachments.clear()
+        assignment.attachment_url = None
+        assignment.attachment_name = None
+        self.db.commit()
+        self.db.refresh(assignment)
+        return self._to_assignment_read(assignment)
+
     def list_my_submissions(self, assignment_id: UUID, current_user: UserRead) -> list[AssignmentSubmissionRead]:
         assignment = self._get_assignment_or_404(assignment_id)
         self._ensure_assignment_view_access(assignment, current_user)
         current_submission = self.submissions.get_current_for_student(assignment.id, current_user.id)
         if current_submission is None:
             return []
-        return [AssignmentSubmissionRead.model_validate(current_submission)]
+        return [self._to_submission_read(current_submission)]
 
     def create_submission(
         self,
@@ -144,7 +189,15 @@ class AssignmentService:
             self._replace_submission_attachments(submission, uploads)
         self.db.commit()
         self.db.refresh(submission)
-        return AssignmentSubmissionRead.model_validate(submission)
+        author = assignment.module.course.author
+        if author is not None and author.id != current_user.id:
+            self.notifications.create_assignment_submitted_notification(
+                author.id,
+                module_id=assignment.module_id,
+                assignment_title=assignment.title,
+                actor_name=get_user_display_name(current_user),
+            )
+        return self._to_submission_read(submission)
 
     def update_submission(
         self,
@@ -173,7 +226,15 @@ class AssignmentService:
             self._replace_submission_attachments(submission, uploads)
         self.db.commit()
         self.db.refresh(submission)
-        return AssignmentSubmissionRead.model_validate(submission)
+        author = submission.assignment.module.course.author
+        if author is not None and author.id != current_user.id:
+            self.notifications.create_assignment_submitted_notification(
+                author.id,
+                module_id=submission.assignment.module_id,
+                assignment_title=submission.assignment.title,
+                actor_name=get_user_display_name(current_user),
+            )
+        return self._to_submission_read(submission)
 
     def delete_submission(self, submission_id: UUID, current_user: UserRead) -> None:
         submission = self._get_submission_for_owner(submission_id, current_user)
@@ -183,7 +244,7 @@ class AssignmentService:
     def list_assignment_submissions(self, assignment_id: UUID, current_user: UserRead) -> list[AssignmentSubmissionRead]:
         assignment = self._get_assignment_for_management(assignment_id, current_user)
         submissions = self.submissions.list_for_assignment(assignment.id)
-        return [AssignmentSubmissionRead.model_validate(item) for item in submissions]
+        return [self._to_submission_read(item) for item in submissions]
 
     def grade_submission(
         self,
@@ -198,7 +259,23 @@ class AssignmentService:
         submission.graded_at = datetime.now(UTC)
         self.db.commit()
         self.db.refresh(submission)
-        return AssignmentSubmissionRead.model_validate(submission)
+        if submission.student_id != current_user.id:
+            feedback = submission.feedback_markdown
+            if feedback:
+                self.notifications.create_assignment_feedback_notification(
+                    submission.student_id,
+                    module_id=submission.assignment.module_id,
+                    assignment_title=submission.assignment.title,
+                    feedback_markdown=feedback,
+                )
+            else:
+                self.notifications.create_assignment_graded_notification(
+                    submission.student_id,
+                    module_id=submission.assignment.module_id,
+                    assignment_title=submission.assignment.title,
+                    score=submission.score,
+                )
+        return self._to_submission_read(submission)
 
     def _to_assignment_read(self, assignment: Assignment) -> AssignmentRead:
         return AssignmentRead(
@@ -209,11 +286,35 @@ class AssignmentService:
             attachment_url=assignment.attachment_url,
             attachment_name=assignment.attachment_name,
             max_score=assignment.max_score,
+            due_at=assignment.due_at,
             is_published=assignment.is_published,
             has_submissions=bool(assignment.submissions),
             attachments=assignment.attachments,
             created_at=assignment.created_at,
             updated_at=assignment.updated_at,
+        )
+
+    def _to_submission_read(self, submission: AssignmentSubmission) -> AssignmentSubmissionRead:
+        return AssignmentSubmissionRead(
+            id=submission.id,
+            assignment_id=submission.assignment_id,
+            student_id=submission.student_id,
+            attempt_number=submission.attempt_number,
+            answer_markdown=submission.answer_markdown,
+            attachment_url=submission.attachment_url,
+            attachment_name=submission.attachment_name,
+            status=submission.status,
+            score=submission.score,
+            feedback_markdown=submission.feedback_markdown,
+            submitted_at=submission.submitted_at,
+            graded_at=submission.graded_at,
+            is_late=bool(
+                submission.assignment.due_at is not None and submission.submitted_at > submission.assignment.due_at
+            ),
+            created_at=submission.created_at,
+            updated_at=submission.updated_at,
+            student=submission.student,
+            attachments=submission.attachments,
         )
 
     def _replace_assignment_attachments(self, assignment: Assignment, uploads: list[UploadFile]) -> None:
@@ -262,10 +363,7 @@ class AssignmentService:
 
     def _get_module_for_management(self, module_id: UUID, current_user: UserRead) -> Module:
         module = self._get_module_or_404(module_id)
-        if current_user.role == UserRole.ADMIN:
-            return module
-        if current_user.role != UserRole.TEACHER or module.course.author_id != current_user.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+        self.courses.ensure_can_manage_course(module.course_id, current_user)
         return module
 
     def _get_assignment_for_management(self, assignment_id: UUID, current_user: UserRead) -> Assignment:
@@ -292,12 +390,22 @@ class AssignmentService:
     def _ensure_module_view_access(self, module: Module, current_user: UserRead) -> None:
         if not self.courses.has_course_access(module.course_id, current_user):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are not enrolled in this course")
-        if not module.is_published and current_user.role != UserRole.ADMIN and module.course.author_id != current_user.id:
+        if (
+            not module.is_published
+            and current_user.role != UserRole.ADMIN
+            and module.course.author_id != current_user.id
+            and not self.courses.is_course_collaborator(module.course_id, current_user.id)
+        ):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Module is not published")
 
     def _ensure_assignment_view_access(self, assignment: Assignment, current_user: UserRead) -> None:
         self._ensure_module_view_access(assignment.module, current_user)
-        if not assignment.is_published and current_user.role != UserRole.ADMIN and assignment.module.course.author_id != current_user.id:
+        if (
+            not assignment.is_published
+            and current_user.role != UserRole.ADMIN
+            and assignment.module.course.author_id != current_user.id
+            and not self.courses.is_course_collaborator(assignment.module.course_id, current_user.id)
+        ):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Assignment is not published")
 
     def _ensure_assignment_submission_access(self, assignment: Assignment, current_user: UserRead) -> None:
@@ -307,10 +415,18 @@ class AssignmentService:
         if current_user.role != UserRole.STUDENT:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only students can submit assignments")
 
+    def _normalize_datetime(self, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
 
 def get_assignment_service(
     db: Session = Depends(get_db),
     courses: CourseService = Depends(get_course_service),
     media: MediaService = Depends(get_media_service),
+    notifications: NotificationService = Depends(get_notification_service),
 ) -> AssignmentService:
-    return AssignmentService(db, courses, media)
+    return AssignmentService(db, courses, media, notifications)

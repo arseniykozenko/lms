@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 
 function escapeHtml(value) {
   return value
@@ -25,14 +25,17 @@ function markdownToHtml(markdown) {
     return "<p>Текст пока не добавлен.</p>";
   }
 
-  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const normalizedMarkdown = markdown
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/\r\n/g, "\n");
+  const lines = normalizedMarkdown.split("\n");
   const blocks = [];
   let paragraphLines = [];
   let listItems = [];
 
   function flushParagraph() {
     if (!paragraphLines.length) return;
-    blocks.push(`<p>${renderInlineMarkdown(paragraphLines.join("<br />"))}</p>`);
+    blocks.push(`<p>${paragraphLines.map((line) => renderInlineMarkdown(line)).join("<br />")}</p>`);
     paragraphLines = [];
   }
 

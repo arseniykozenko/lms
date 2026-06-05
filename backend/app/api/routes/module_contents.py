@@ -25,6 +25,25 @@ def list_module_contents(
     return module_content_service.list_module_contents(module_id, current_user)
 
 
+@router.post("/module-contents/{content_id}/view", status_code=status.HTTP_204_NO_CONTENT)
+def mark_module_content_viewed(
+    content_id: UUID,
+    current_user: UserRead = Depends(get_current_active_user),
+    module_content_service: ModuleContentService = Depends(get_module_content_service),
+) -> Response:
+    module_content_service.mark_content_viewed(content_id, current_user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/module-contents/{content_id}/transcribe", response_model=ModuleContentRead)
+def transcribe_module_content(
+    content_id: UUID,
+    current_user: UserRead = Depends(get_current_active_user),
+    module_content_service: ModuleContentService = Depends(get_module_content_service),
+) -> ModuleContentRead:
+    return module_content_service.generate_transcript(content_id, current_user)
+
+
 @router.post("/modules/{module_id}/contents/text", response_model=ModuleContentRead, status_code=status.HTTP_201_CREATED)
 def create_text_content(
     module_id: UUID,

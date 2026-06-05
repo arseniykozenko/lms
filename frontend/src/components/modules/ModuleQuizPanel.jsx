@@ -2,7 +2,7 @@
 import { LeftOutlined, ReadOutlined, RightOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Empty, Form, List, Modal, Popconfirm, Progress, Radio, Skeleton, Space, Tag, Typography, message } from "antd";
 
-import { formatDate } from "./moduleHelpers";
+import { formatDate, formatDeadline, isDeadlinePassed } from "./moduleHelpers";
 
 export function ModuleQuizPanel({
   quiz,
@@ -61,6 +61,7 @@ export function ModuleQuizPanel({
   const hasCompletedAttempt = Boolean(quizSubmitResult?.id);
   const correctCount = quizSubmitResult?.score || 0;
   const incorrectCount = hasCompletedAttempt ? Math.max(totalQuestions - correctCount, 0) : 0;
+  const attemptPercent = totalQuestions ? Math.round((correctCount / totalQuestions) * 100) : 0;
 
   function goToPreviousQuestion() {
     setCurrentQuestionIndex((index) => Math.max(0, index - 1));
@@ -156,6 +157,9 @@ export function ModuleQuizPanel({
                 <Tag color={quiz.is_published ? "green" : "orange"}>
                   {quiz.is_published ? "Опубликован" : "Черновик"}
                 </Tag>
+                <Tag color={quiz.due_at ? (isDeadlinePassed(quiz.due_at) ? "red" : "geekblue") : "default"}>
+                  {formatDeadline(quiz.due_at)}
+                </Tag>
                 {quiz.has_attempts ? <Tag color="blue">Есть попытки</Tag> : null}
               </Space>
               <Typography.Paragraph className="panel-copy">
@@ -181,6 +185,7 @@ export function ModuleQuizPanel({
                       message="Тест завершен"
                       description={`Попытка сохранена. Ваш результат: ${correctCount} из ${totalQuestions}.`}
                     />
+                    {quizSubmitResult.is_late ? <Tag color="red">Попытка после дедлайна</Tag> : null}
 
                     <div className="quiz-summary-grid">
                       <div className="quiz-summary-item">
@@ -193,7 +198,7 @@ export function ModuleQuizPanel({
                       </div>
                       <div className="quiz-summary-item">
                         <Typography.Text type="secondary">Прогресс попытки</Typography.Text>
-                        <Typography.Title level={4}>100%</Typography.Title>
+                        <Typography.Title level={4}>{attemptPercent}%</Typography.Title>
                       </div>
                     </div>
 
@@ -297,6 +302,7 @@ export function ModuleQuizPanel({
                         <Typography.Text>
                           {attempt.score}/{attempt.total_questions}
                         </Typography.Text>
+                        {attempt.is_late ? <Tag color="red">Поздно</Tag> : null}
                         <Typography.Text type="secondary">{formatDate(attempt.created_at)}</Typography.Text>
                       </div>
                     </List.Item>

@@ -1,5 +1,6 @@
-﻿import { combine, createEffect, createEvent, createStore, sample } from "effector";
+import { combine, createEffect, createEvent, createStore, sample } from "effector";
 
+import { myCoursesRefreshRequested } from "./auth";
 import {
   createAssignmentSubmission,
   deleteAssignmentSubmission,
@@ -21,6 +22,7 @@ import {
   getMyAssignmentSubmissions,
   getMyQuizAttempts,
   gradeAssignmentSubmission,
+  markModuleContentViewed,
   replaceModuleContentFile,
   submitQuiz,
   updateAssignmentSubmission,
@@ -28,6 +30,7 @@ import {
   updateModuleContent,
   updateModuleQuiz,
   uploadAssignmentAttachment,
+  clearAssignmentAttachment,
   uploadModuleFileContent,
 } from "../api/modules";
 
@@ -37,8 +40,14 @@ export const quizAttemptRestarted = createEvent();
 
 export const loadModuleFx = createEffect(async (moduleId) => getModule(moduleId));
 export const loadModuleContentsFx = createEffect(async (moduleId) => getModuleContents(moduleId));
+export const markModuleContentViewedFx = createEffect(async (contentId) => {
+  await markModuleContentViewed(contentId);
+  return contentId;
+});
 export const loadModuleAssignmentsFx = createEffect(async (moduleId) => getModuleAssignments(moduleId));
 export const loadModuleCommentsFx = createEffect(async (moduleId) => getModuleComments(moduleId));
+export const loadModuleAssignmentsQuietFx = createEffect(async (moduleId) => getModuleAssignments(moduleId));
+export const loadModuleCommentsQuietFx = createEffect(async (moduleId) => getModuleComments(moduleId));
 export const loadModuleQuizFx = createEffect(async (moduleId) => {
   try {
     return await getModuleQuiz(moduleId);
@@ -68,6 +77,7 @@ export const deleteModuleAssignmentFx = createEffect(async ({ assignmentId, modu
 export const uploadAssignmentAttachmentFx = createEffect(async ({ assignmentId, files }) =>
   uploadAssignmentAttachment(assignmentId, files),
 );
+export const clearAssignmentAttachmentFx = createEffect(async ({ assignmentId }) => clearAssignmentAttachment(assignmentId));
 export const loadAssignmentSubmissionsFx = createEffect(async ({ assignmentId, canManage }) => {
   const submissions = canManage ? await getAssignmentSubmissions(assignmentId) : await getMyAssignmentSubmissions(assignmentId);
   return { assignmentId, submissions };
@@ -118,11 +128,15 @@ export const $moduleContents = createStore([])
 
 export const $moduleAssignments = createStore([])
   .on(loadModuleAssignmentsFx.doneData, (_, assignments) => assignments)
+  .on(loadModuleAssignmentsQuietFx.doneData, (_, assignments) => assignments)
   .on(createModuleAssignmentFx.doneData, (assignments, assignment) => [assignment, ...assignments])
   .on(updateModuleAssignmentFx.doneData, (assignments, assignment) =>
     assignments.map((item) => (item.id === assignment.id ? assignment : item)),
   )
   .on(uploadAssignmentAttachmentFx.doneData, (assignments, assignment) =>
+    assignments.map((item) => (item.id === assignment.id ? assignment : item)),
+  )
+  .on(clearAssignmentAttachmentFx.doneData, (assignments, assignment) =>
     assignments.map((item) => (item.id === assignment.id ? assignment : item)),
   )
   .reset(modulePageReset);
@@ -136,6 +150,7 @@ export const $assignmentSubmissionsByAssignment = createStore({})
 
 export const $moduleComments = createStore([])
   .on(loadModuleCommentsFx.doneData, (_, comments) => comments)
+  .on(loadModuleCommentsQuietFx.doneData, (_, comments) => comments)
   .reset(modulePageReset);
 
 export const $moduleQuiz = createStore(null)
@@ -158,6 +173,7 @@ export const $quizSubmitResult = createStore(null)
 
 export const $selectedModulePending = loadModuleFx.pending;
 export const $moduleContentsPending = loadModuleContentsFx.pending;
+export const $moduleContentProgressPending = markModuleContentViewedFx.pending;
 export const $moduleAssignmentsPending = loadModuleAssignmentsFx.pending;
 export const $moduleCommentsPending = loadModuleCommentsFx.pending;
 export const $moduleQuizPending = loadModuleQuizFx.pending;
@@ -168,6 +184,7 @@ export const $moduleAssignmentCreatePending = createModuleAssignmentFx.pending;
 export const $moduleAssignmentUpdatePending = updateModuleAssignmentFx.pending;
 export const $moduleAssignmentDeletePending = deleteModuleAssignmentFx.pending;
 export const $moduleAssignmentAttachmentPending = uploadAssignmentAttachmentFx.pending;
+export const $moduleAssignmentAttachmentClearPending = clearAssignmentAttachmentFx.pending;
 export const $assignmentSubmissionsPending = loadAssignmentSubmissionsFx.pending;
 export const $assignmentSubmissionCreatePending = createAssignmentSubmissionFx.pending;
 export const $assignmentSubmissionUpdatePending = updateAssignmentSubmissionFx.pending;
@@ -190,36 +207,38 @@ export const $moduleInteractionsPending = combine(
   updateModuleQuizFx.pending,
   deleteModuleQuizFx.pending,
   updateModuleContentFx.pending,
-    replaceModuleContentFileFx.pending,
-    deleteModuleContentFx.pending,
-    createModuleAssignmentFx.pending,
-    updateModuleAssignmentFx.pending,
-    deleteModuleAssignmentFx.pending,
-    uploadAssignmentAttachmentFx.pending,
-    createAssignmentSubmissionFx.pending,
-    updateAssignmentSubmissionFx.pending,
-    deleteAssignmentSubmissionFx.pending,
-    gradeAssignmentSubmissionFx.pending,
-    submitQuizFx.pending,
-    (
+  replaceModuleContentFileFx.pending,
+  deleteModuleContentFx.pending,
+  createModuleAssignmentFx.pending,
+  updateModuleAssignmentFx.pending,
+  deleteModuleAssignmentFx.pending,
+  uploadAssignmentAttachmentFx.pending,
+  clearAssignmentAttachmentFx.pending,
+  createAssignmentSubmissionFx.pending,
+  updateAssignmentSubmissionFx.pending,
+  deleteAssignmentSubmissionFx.pending,
+  gradeAssignmentSubmissionFx.pending,
+  submitQuizFx.pending,
+  (
     commentCreatePending,
     commentDeletePending,
     quizCreatePending,
-      quizUpdatePending,
-      quizDeletePending,
-      contentUpdatePending,
-      contentReplacePending,
-      contentDeletePending,
-      assignmentCreatePending,
-      assignmentUpdatePending,
-      assignmentDeletePending,
-      assignmentAttachmentPending,
-      assignmentSubmissionPending,
-      assignmentSubmissionUpdatePending,
-      assignmentSubmissionDeletePending,
-      assignmentGradePending,
-      submitPending,
-    ) =>
+    quizUpdatePending,
+    quizDeletePending,
+    contentUpdatePending,
+    contentReplacePending,
+    contentDeletePending,
+    assignmentCreatePending,
+    assignmentUpdatePending,
+    assignmentDeletePending,
+    assignmentAttachmentPending,
+    assignmentAttachmentClearPending,
+    assignmentSubmissionPending,
+    assignmentSubmissionUpdatePending,
+    assignmentSubmissionDeletePending,
+    assignmentGradePending,
+    submitPending,
+  ) =>
     commentCreatePending ||
     commentDeletePending ||
     quizCreatePending ||
@@ -232,6 +251,7 @@ export const $moduleInteractionsPending = combine(
     assignmentUpdatePending ||
     assignmentDeletePending ||
     assignmentAttachmentPending ||
+    assignmentAttachmentClearPending ||
     assignmentSubmissionPending ||
     assignmentSubmissionUpdatePending ||
     assignmentSubmissionDeletePending ||
@@ -257,7 +277,7 @@ sample({
 });
 
 sample({
-  clock: [createModuleAssignmentFx.done, updateModuleAssignmentFx.done, uploadAssignmentAttachmentFx.done],
+  clock: [createModuleAssignmentFx.done, updateModuleAssignmentFx.done, uploadAssignmentAttachmentFx.done, clearAssignmentAttachmentFx.done],
   fn: ({ result }) => result.module_id,
   target: loadModuleAssignmentsFx,
 });
@@ -306,6 +326,18 @@ sample({
   clock: submitQuizFx.doneData,
   fn: (result) => result.quiz_id,
   target: loadMyQuizAttemptsFx,
+});
+
+sample({
+  clock: [
+    markModuleContentViewedFx.done,
+    createAssignmentSubmissionFx.done,
+    updateAssignmentSubmissionFx.done,
+    deleteAssignmentSubmissionFx.done,
+    gradeAssignmentSubmissionFx.done,
+    submitQuizFx.done,
+  ],
+  target: myCoursesRefreshRequested,
 });
 
 sample({

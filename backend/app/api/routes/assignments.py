@@ -75,6 +75,15 @@ def upload_assignment_attachment(
     return assignment_service.upload_assignment_attachment(assignment_id, files, current_user)
 
 
+@router.delete("/assignments/{assignment_id}/attachment", response_model=AssignmentRead)
+def clear_assignment_attachment(
+    assignment_id: UUID,
+    current_user: UserRead = Depends(require_teacher),
+    assignment_service: AssignmentService = Depends(get_assignment_service),
+) -> AssignmentRead:
+    return assignment_service.clear_assignment_attachments(assignment_id, current_user)
+
+
 @router.get("/assignments/{assignment_id}/submissions/me", response_model=list[AssignmentSubmissionRead])
 def list_my_assignment_submissions(
     assignment_id: UUID,

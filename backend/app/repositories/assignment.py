@@ -69,7 +69,11 @@ class AssignmentSubmissionRepository:
                 AssignmentSubmission.assignment_id == assignment_id,
                 AssignmentSubmission.student_id == student_id,
             )
-            .options(selectinload(AssignmentSubmission.student), selectinload(AssignmentSubmission.attachments))
+            .options(
+                selectinload(AssignmentSubmission.assignment),
+                selectinload(AssignmentSubmission.student),
+                selectinload(AssignmentSubmission.attachments),
+            )
             .order_by(AssignmentSubmission.attempt_number.desc(), AssignmentSubmission.created_at.desc())
         )
         return list(self.db.scalars(stmt))
@@ -81,7 +85,11 @@ class AssignmentSubmissionRepository:
                 AssignmentSubmission.assignment_id == assignment_id,
                 AssignmentSubmission.student_id == student_id,
             )
-            .options(selectinload(AssignmentSubmission.student), selectinload(AssignmentSubmission.attachments))
+            .options(
+                selectinload(AssignmentSubmission.assignment),
+                selectinload(AssignmentSubmission.student),
+                selectinload(AssignmentSubmission.attachments),
+            )
             .order_by(AssignmentSubmission.updated_at.desc(), AssignmentSubmission.created_at.desc())
             .limit(1)
         )
@@ -91,7 +99,11 @@ class AssignmentSubmissionRepository:
         stmt = (
             select(AssignmentSubmission)
             .where(AssignmentSubmission.assignment_id == assignment_id)
-            .options(selectinload(AssignmentSubmission.student), selectinload(AssignmentSubmission.attachments))
+            .options(
+                selectinload(AssignmentSubmission.assignment),
+                selectinload(AssignmentSubmission.student),
+                selectinload(AssignmentSubmission.attachments),
+            )
             .order_by(AssignmentSubmission.created_at.desc(), AssignmentSubmission.attempt_number.desc())
         )
         return list(self.db.scalars(stmt))

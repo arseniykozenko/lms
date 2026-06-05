@@ -1,4 +1,6 @@
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
+import io
+import zipfile
 
 import pytest
 
@@ -10,10 +12,19 @@ def auth_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def register_and_login(client, *, email: str, role: str, full_name: str | None = None) -> dict:
+def register_and_login(
+    client,
+    *,
+    email: str,
+    role: str,
+    first_name: str | None = None,
+    second_name: str | None = None,
+) -> dict:
     payload = {"email": email, "password": "strongpass123", "role": role}
-    if full_name is not None:
-        payload["full_name"] = full_name
+    if first_name is not None:
+        payload["first_name"] = first_name
+    if second_name is not None:
+        payload["second_name"] = second_name
     response = client.post("/api/v1/auth/register", json=payload)
     assert response.status_code == 201
     return response.json()
@@ -22,7 +33,7 @@ def register_and_login(client, *, email: str, role: str, full_name: str | None =
 def create_admin(db_session) -> User:
     admin = User(
         email="admin@example.com",
-        full_name="Admin",
+        first_name="Admin",
         password_hash=hash_password("strongpass123"),
         role=UserRole.ADMIN,
     )
@@ -39,17 +50,18 @@ def login_admin(client) -> str:
 
 
 def test_user_profile_update_and_self_courses_flow(client):
-    register_payload = register_and_login(client, email="student@example.com", role="student", full_name="Student")
+    register_payload = register_and_login(client, email="student@example.com", role="student", first_name="Student")
     token = register_payload["access_token"]
 
     response = client.patch(
         "/api/v1/users/me",
-        json={"full_name": "Updated Student", "profile_photo_url": "https://cdn.example/avatar.png"},
+        json={"first_name": "Updated", "second_name": "Student", "profile_photo_url": "https://cdn.example/avatar.png"},
         headers=auth_headers(token),
     )
 
     assert response.status_code == 200
-    assert response.json()["full_name"] == "Updated Student"
+    assert response.json()["first_name"] == "Updated"
+    assert response.json()["second_name"] == "Student"
     assert response.json()["profile_photo_url"] == "https://cdn.example/avatar.png"
 
     courses_response = client.get("/api/v1/users/me/courses", headers=auth_headers(token))
@@ -58,7 +70,7 @@ def test_user_profile_update_and_self_courses_flow(client):
 
 
 def test_user_profile_photo_upload(client):
-    register_payload = register_and_login(client, email="upload@example.com", role="student", full_name="Uploader")
+    register_payload = register_and_login(client, email="upload@example.com", role="student", first_name="Uploader")
     token = register_payload["access_token"]
 
     response = client.post(
@@ -73,8 +85,8 @@ def test_user_profile_photo_upload(client):
 
 
 def test_course_enrollment_module_comment_and_quiz_flow(client):
-    teacher = register_and_login(client, email="teacher@example.com", role="teacher", full_name="Teacher")
-    student = register_and_login(client, email="student@example.com", role="student", full_name="Student")
+    teacher = register_and_login(client, email="teacher@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="student@example.com", role="student", first_name="Student")
     teacher_headers = auth_headers(teacher["access_token"])
     student_headers = auth_headers(student["access_token"])
 
@@ -193,9 +205,9 @@ def test_student_cannot_create_course(client):
 
 
 def test_teacher_can_list_and_remove_course_students(client):
-    teacher = register_and_login(client, email="teacher@example.com", role="teacher", full_name="Teacher")
-    student = register_and_login(client, email="student@example.com", role="student", full_name="Student")
-    other_teacher = register_and_login(client, email="other-teacher@example.com", role="teacher", full_name="Other Teacher")
+    teacher = register_and_login(client, email="teacher@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="student@example.com", role="student", first_name="Student")
+    other_teacher = register_and_login(client, email="other-teacher@example.com", role="teacher", first_name="Other Teacher")
 
     teacher_headers = auth_headers(teacher["access_token"])
     student_headers = auth_headers(student["access_token"])
@@ -231,9 +243,207 @@ def test_teacher_can_list_and_remove_course_students(client):
     assert students_after_remove.json() == []
 
 
+def test_teacher_course_students_include_progress(client):
+    teacher = register_and_login(client, email="teacher-progress@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="student-progress@example.com", role="student", first_name="Student")
+    teacher_headers = auth_headers(teacher["access_token"])
+    student_headers = auth_headers(student["access_token"])
+
+    course_response = client.post(
+        "/api/v1/courses",
+        json={"title": "Teacher analytics course", "description": "Desc", "is_published": True},
+        headers=teacher_headers,
+    )
+    assert course_response.status_code == 201
+    course_id = course_response.json()["id"]
+
+    module_response = client.post(
+        "/api/v1/modules",
+        json={"course_id": course_id, "title": "Analytics module", "description": "Desc", "is_published": True},
+        headers=teacher_headers,
+    )
+    assert module_response.status_code == 201
+    module_id = module_response.json()["id"]
+
+    content_response = client.post(
+        f"/api/v1/modules/{module_id}/contents/text",
+        json={"title": "Theory", "text_content": "Lesson"},
+        headers=teacher_headers,
+    )
+    assert content_response.status_code == 201
+    content_id = content_response.json()["id"]
+
+    assignment_response = client.post(
+        f"/api/v1/modules/{module_id}/assignments",
+        json={"title": "Homework", "instructions_markdown": "Do it", "max_score": 10, "is_published": True},
+        headers=teacher_headers,
+    )
+    assert assignment_response.status_code == 201
+    assignment_id = assignment_response.json()["id"]
+
+    enroll_response = client.post(f"/api/v1/courses/{course_id}/enroll", headers=student_headers)
+    assert enroll_response.status_code == 201
+
+    client.post(f"/api/v1/module-contents/{content_id}/view", headers=student_headers)
+    submission_response = client.post(
+        f"/api/v1/assignments/{assignment_id}/submissions",
+        headers=student_headers,
+        data={"answer_markdown": "Done"},
+    )
+    assert submission_response.status_code == 201
+
+    grade_response = client.patch(
+        f"/api/v1/assignment-submissions/{submission_response.json()['id']}/grade",
+        json={"score": 9, "feedback_markdown": "Checked"},
+        headers=teacher_headers,
+    )
+    assert grade_response.status_code == 200
+
+    students_response = client.get(f"/api/v1/courses/{course_id}/students", headers=teacher_headers)
+    assert students_response.status_code == 200
+    payload = students_response.json()
+    assert len(payload) == 1
+    assert payload[0]["user"]["email"] == "student-progress@example.com"
+    assert payload[0]["progress"]["progress_percent"] == 100
+    assert payload[0]["progress"]["viewed_contents"] == 1
+    assert payload[0]["progress"]["completed_assignments"] == 1
+    assert payload[0]["progress_status"] == "completed"
+    assert payload[0]["last_activity_at"] is not None
+    assert payload[0]["inactivity_days"] == 0
+    assert payload[0]["pending_assignments_count"] == 0
+    assert payload[0]["passed_quizzes_count"] == 0
+    assert payload[0]["failed_quizzes_count"] == 0
+    assert payload[0]["overdue_items_count"] == 0
+    assert payload[0]["upcoming_deadlines_count"] == 0
+    assert payload[0]["late_submissions_count"] == 0
+    assert payload[0]["average_assignment_score_percent"] == 90
+    assert payload[0]["average_quiz_score_percent"] is None
+    assert payload[0]["recent_activity_count_7d"] >= 1
+    assert payload[0]["recent_completed_items_7d"] >= 1
+    assert payload[0]["engagement_trend"] == "stable"
+    assert payload[0]["risk_score"] == 0
+    assert payload[0]["risk_level"] == "low"
+
+    csv_response = client.get(f"/api/v1/courses/{course_id}/students.csv", headers=teacher_headers)
+    assert csv_response.status_code == 200
+    assert "text/csv" in csv_response.headers["content-type"]
+    csv_text = csv_response.text
+    assert csv_text.startswith("\ufeff")
+    assert "student_name;email;progress_percent;progress_status;completed_items;total_items" in csv_text
+    assert "avg_assignment_score_percent;avg_quiz_score_percent;recent_activity_count_7d;recent_completed_items_7d;pseudo_activity;engagement_trend;last_activity_at" in csv_text
+    assert len(csv_text.splitlines()) >= 2
+    assert "student-progress@example.com" in csv_text
+
+    analytics_response = client.get(f"/api/v1/courses/{course_id}/analytics.zip", headers=teacher_headers)
+    assert analytics_response.status_code == 200
+    assert analytics_response.headers["content-type"] == "application/zip"
+    archive = zipfile.ZipFile(io.BytesIO(analytics_response.content))
+    names = set(archive.namelist())
+    assert {"course_summary.csv", "students_analytics.csv", "modules_analytics.csv"}.issubset(names)
+    summary_csv = archive.read("course_summary.csv").decode("utf-8")
+    students_csv = archive.read("students_analytics.csv").decode("utf-8")
+    modules_csv = archive.read("modules_analytics.csv").decode("utf-8")
+    assert "metric;value" in summary_csv
+    assert "students_total" in summary_csv
+    assert "student_name;email;progress_percent" in students_csv
+    assert "module_id;module_title;student_count" in modules_csv
+
+
+def test_teacher_course_students_include_risk_and_deadline_analytics(client):
+    teacher = register_and_login(client, email="teacher-risk@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="student-risk@example.com", role="student", first_name="Student")
+    teacher_headers = auth_headers(teacher["access_token"])
+    student_headers = auth_headers(student["access_token"])
+
+    course_response = client.post(
+        "/api/v1/courses",
+        json={"title": "Risk analytics course", "description": "Desc", "is_published": True},
+        headers=teacher_headers,
+    )
+    course_id = course_response.json()["id"]
+
+    module_response = client.post(
+        "/api/v1/modules",
+        json={"course_id": course_id, "title": "Risk analytics module", "description": "Desc", "is_published": True},
+        headers=teacher_headers,
+    )
+    module_id = module_response.json()["id"]
+
+    overdue_due_at = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+    upcoming_due_at = (datetime.now(UTC) + timedelta(days=2)).isoformat()
+
+    client.post(
+        f"/api/v1/modules/{module_id}/assignments",
+        json={
+            "title": "Overdue homework",
+            "instructions_markdown": "Do it",
+            "max_score": 10,
+            "due_at": overdue_due_at,
+            "is_published": True,
+        },
+        headers=teacher_headers,
+    )
+    client.post(
+        f"/api/v1/modules/{module_id}/assignments",
+        json={
+            "title": "Upcoming homework",
+            "instructions_markdown": "Do it later",
+            "max_score": 10,
+            "due_at": upcoming_due_at,
+            "is_published": True,
+        },
+        headers=teacher_headers,
+    )
+    quiz_response = client.post(
+        f"/api/v1/modules/{module_id}/quiz",
+        json={
+            "title": "Risk quiz",
+            "is_published": True,
+            "questions": [
+                {
+                    "content": "What framework are we using?",
+                    "options": ["FastAPI", "Django"],
+                    "correct_option": "FastAPI",
+                    "explanation": "FastAPI",
+                    "position": 1,
+                }
+            ],
+        },
+        headers=teacher_headers,
+    )
+    quiz_id = quiz_response.json()["id"]
+    question_id = quiz_response.json()["questions"][0]["id"]
+
+    enroll_response = client.post(f"/api/v1/courses/{course_id}/enroll", headers=student_headers)
+    assert enroll_response.status_code == 201
+
+    failed_attempt = client.post(
+        f"/api/v1/quizzes/{quiz_id}/submit",
+        json={"answers": [{"question_id": question_id, "selected_option": "Django"}]},
+        headers=student_headers,
+    )
+    assert failed_attempt.status_code == 200
+
+    students_response = client.get(f"/api/v1/courses/{course_id}/students", headers=teacher_headers)
+    assert students_response.status_code == 200
+    payload = students_response.json()
+    assert len(payload) == 1
+    student_row = payload[0]
+    assert student_row["overdue_items_count"] == 1
+    assert student_row["upcoming_deadlines_count"] == 1
+    assert student_row["failed_quizzes_count"] == 1
+    assert student_row["average_assignment_score_percent"] is None
+    assert student_row["average_quiz_score_percent"] == 0
+    assert student_row["recent_activity_count_7d"] >= 1
+    assert student_row["recent_completed_items_7d"] == 0
+    assert student_row["engagement_trend"] in {"stable", "growing"}
+    assert student_row["risk_score"] >= 40
+    assert student_row["risk_level"] in {"medium", "high"}
+
+
 def test_student_hidden_draft_course_disappears_from_my_courses(client):
-    teacher = register_and_login(client, email="teacher@example.com", role="teacher", full_name="Teacher")
-    student = register_and_login(client, email="student@example.com", role="student", full_name="Student")
+    teacher = register_and_login(client, email="teacher@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="student@example.com", role="student", first_name="Student")
     teacher_headers = auth_headers(teacher["access_token"])
     student_headers = auth_headers(student["access_token"])
 
@@ -265,7 +475,7 @@ def test_student_hidden_draft_course_disappears_from_my_courses(client):
 
 
 def test_module_positions_are_sequential_and_can_be_reordered(client):
-    teacher = register_and_login(client, email="teacher@example.com", role="teacher", full_name="Teacher")
+    teacher = register_and_login(client, email="teacher@example.com", role="teacher", first_name="Teacher")
     teacher_headers = auth_headers(teacher["access_token"])
 
     course_response = client.post(
@@ -305,8 +515,8 @@ def test_module_positions_are_sequential_and_can_be_reordered(client):
 
 
 def test_module_contents_support_text_link_and_file(client):
-    teacher = register_and_login(client, email="teacher@example.com", role="teacher", full_name="Teacher")
-    student = register_and_login(client, email="student@example.com", role="student", full_name="Student")
+    teacher = register_and_login(client, email="teacher@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="student@example.com", role="student", first_name="Student")
     teacher_headers = auth_headers(teacher["access_token"])
     student_headers = auth_headers(student["access_token"])
 
@@ -371,8 +581,8 @@ def test_module_contents_support_text_link_and_file(client):
 
 
 def test_module_contents_support_presentation_upload(client):
-    teacher = register_and_login(client, email="teacher@example.com", role="teacher", full_name="Teacher")
-    student = register_and_login(client, email="student@example.com", role="student", full_name="Student")
+    teacher = register_and_login(client, email="teacher@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="student@example.com", role="student", first_name="Student")
     teacher_headers = auth_headers(teacher["access_token"])
     student_headers = auth_headers(student["access_token"])
 
@@ -408,9 +618,169 @@ def test_module_contents_support_presentation_upload(client):
     assert contents_response.json()[0]["content_type"] == "presentation"
 
 
+def test_student_course_progress_tracks_content_assignment_and_quiz(client):
+    teacher = register_and_login(client, email="progress-teacher@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="progress-student@example.com", role="student", first_name="Student")
+    teacher_headers = auth_headers(teacher["access_token"])
+    student_headers = auth_headers(student["access_token"])
+
+    course_response = client.post(
+        "/api/v1/courses",
+        json={"title": "Progress course", "description": "Desc", "is_published": True},
+        headers=teacher_headers,
+    )
+    assert course_response.status_code == 201
+    course_id = course_response.json()["id"]
+
+    module_response = client.post(
+        "/api/v1/modules",
+        json={"course_id": course_id, "title": "Progress module", "description": "Desc", "is_published": True},
+        headers=teacher_headers,
+    )
+    assert module_response.status_code == 201
+    module_id = module_response.json()["id"]
+
+    content_response = client.post(
+        f"/api/v1/modules/{module_id}/contents/text",
+        json={"title": "Theory", "text_content": "Lesson body"},
+        headers=teacher_headers,
+    )
+    assert content_response.status_code == 201
+    content_id = content_response.json()["id"]
+
+    assignment_response = client.post(
+        f"/api/v1/modules/{module_id}/assignments",
+        json={
+            "title": "Homework",
+            "instructions_markdown": "Do it",
+            "max_score": 10,
+            "is_published": True,
+        },
+        headers=teacher_headers,
+    )
+    assert assignment_response.status_code == 201
+    assignment_id = assignment_response.json()["id"]
+
+    quiz_response = client.post(
+        f"/api/v1/modules/{module_id}/quiz",
+        json={
+            "title": "Progress quiz",
+            "is_published": True,
+            "questions": [
+                {
+                    "content": "What framework are we learning?",
+                    "options": ["FastAPI", "Flask"],
+                    "correct_option": "FastAPI",
+                    "explanation": "This course uses FastAPI",
+                    "position": 1,
+                },
+                {
+                    "content": "Which database is used in the project?",
+                    "options": ["PostgreSQL", "SQLite"],
+                    "correct_option": "PostgreSQL",
+                    "explanation": "The backend is configured for PostgreSQL",
+                    "position": 2,
+                }
+            ],
+        },
+        headers=teacher_headers,
+    )
+    assert quiz_response.status_code == 201
+    quiz_id = quiz_response.json()["id"]
+    first_question_id = quiz_response.json()["questions"][0]["id"]
+    second_question_id = quiz_response.json()["questions"][1]["id"]
+
+    enroll_response = client.post(f"/api/v1/courses/{course_id}/enroll", headers=student_headers)
+    assert enroll_response.status_code == 201
+
+    initial_courses = client.get("/api/v1/users/me/courses", headers=student_headers)
+    assert initial_courses.status_code == 200
+    progress = initial_courses.json()[0]["progress"]
+    assert progress["progress_percent"] == 0
+    assert progress["total_items"] == 3
+    assert progress["viewed_contents"] == 0
+    assert progress["completed_assignments"] == 0
+    assert progress["completed_quizzes"] == 0
+
+    content_view_response = client.post(f"/api/v1/module-contents/{content_id}/view", headers=student_headers)
+    assert content_view_response.status_code == 204
+
+    after_content_view = client.get("/api/v1/users/me/courses", headers=student_headers)
+    progress = after_content_view.json()[0]["progress"]
+    assert progress["progress_percent"] == 20
+    assert progress["viewed_contents"] == 1
+    assert progress["completed_items"] == 1
+
+    submission_response = client.post(
+        f"/api/v1/assignments/{assignment_id}/submissions",
+        headers=student_headers,
+        data={"answer_markdown": "Done"},
+    )
+    assert submission_response.status_code == 201
+    submission_id = submission_response.json()["id"]
+
+    after_assignment = client.get("/api/v1/users/me/courses", headers=student_headers)
+    progress = after_assignment.json()[0]["progress"]
+    assert progress["progress_percent"] == 20
+    assert progress["completed_assignments"] == 0
+    assert progress["completed_items"] == 1
+
+    grade_response = client.patch(
+        f"/api/v1/assignment-submissions/{submission_id}/grade",
+        json={"score": 8, "feedback_markdown": "Checked"},
+        headers=teacher_headers,
+    )
+    assert grade_response.status_code == 200
+
+    after_assignment_grade = client.get("/api/v1/users/me/courses", headers=student_headers)
+    progress = after_assignment_grade.json()[0]["progress"]
+    assert progress["progress_percent"] == 70
+    assert progress["completed_assignments"] == 1
+    assert progress["completed_items"] == 2
+
+    quiz_submit_response = client.post(
+        f"/api/v1/quizzes/{quiz_id}/submit",
+        json={
+            "answers": [
+                {"question_id": first_question_id, "selected_option": "FastAPI"},
+                {"question_id": second_question_id, "selected_option": "SQLite"},
+            ]
+        },
+        headers=student_headers,
+    )
+    assert quiz_submit_response.status_code == 200
+
+    after_failed_quiz = client.get("/api/v1/users/me/courses", headers=student_headers)
+    progress = after_failed_quiz.json()[0]["progress"]
+    assert progress["progress_percent"] == 70
+    assert progress["completed_quizzes"] == 0
+
+    passed_quiz_submit_response = client.post(
+        f"/api/v1/quizzes/{quiz_id}/submit",
+        json={
+            "answers": [
+                {"question_id": first_question_id, "selected_option": "FastAPI"},
+                {"question_id": second_question_id, "selected_option": "PostgreSQL"},
+            ]
+        },
+        headers=student_headers,
+    )
+    assert passed_quiz_submit_response.status_code == 200
+
+    after_quiz = client.get("/api/v1/users/me/courses", headers=student_headers)
+    progress = after_quiz.json()[0]["progress"]
+    assert progress["progress_percent"] == 100
+    assert progress["completed_quizzes"] == 1
+    assert progress["completed_modules"] == 1
+    assert progress["total_modules"] == 1
+    assert after_quiz.json()[0]["progress_status"] == "completed"
+    assert after_quiz.json()[0]["recent_completed_items_7d"] >= 2
+    assert after_quiz.json()[0]["engagement_trend"] in {"stable", "growing"}
+
+
 def test_reply_comment_must_belong_to_same_module(client):
-    teacher = register_and_login(client, email="teacher@example.com", role="teacher", full_name="Teacher")
-    student = register_and_login(client, email="student@example.com", role="student", full_name="Student")
+    teacher = register_and_login(client, email="teacher@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="student@example.com", role="student", first_name="Student")
     teacher_headers = auth_headers(teacher["access_token"])
     student_headers = auth_headers(student["access_token"])
 
@@ -452,8 +822,8 @@ def test_reply_comment_must_belong_to_same_module(client):
 
 
 def test_comments_support_nested_replies(client):
-    teacher = register_and_login(client, email="teacher@example.com", role="teacher", full_name="Teacher")
-    student = register_and_login(client, email="student@example.com", role="student", full_name="Student")
+    teacher = register_and_login(client, email="teacher@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="student@example.com", role="student", first_name="Student")
     teacher_headers = auth_headers(teacher["access_token"])
     student_headers = auth_headers(student["access_token"])
 
@@ -532,8 +902,8 @@ def test_admin_analytics_counts_enrollments(client, db_session):
 
 
 def test_quiz_attempts_keep_latest_three_with_results(client):
-    teacher = register_and_login(client, email="teacher@example.com", role="teacher", full_name="Teacher")
-    student = register_and_login(client, email="student@example.com", role="student", full_name="Student")
+    teacher = register_and_login(client, email="teacher@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="student@example.com", role="student", first_name="Student")
     teacher_headers = auth_headers(teacher["access_token"])
     student_headers = auth_headers(student["access_token"])
 
@@ -603,9 +973,297 @@ def test_quiz_attempts_keep_latest_three_with_results(client):
     assert attempts[0]["results"][0]["is_correct"] is True
 
 
+def test_assignments_and_quizzes_support_optional_deadlines_and_late_flags(client):
+    teacher = register_and_login(client, email="deadline-teacher@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="deadline-student@example.com", role="student", first_name="Student")
+    teacher_headers = auth_headers(teacher["access_token"])
+    student_headers = auth_headers(student["access_token"])
+
+    course_response = client.post(
+        "/api/v1/courses",
+        json={"title": "Deadline course", "description": "Desc", "is_published": True},
+        headers=teacher_headers,
+    )
+    course_id = course_response.json()["id"]
+
+    module_response = client.post(
+        "/api/v1/modules",
+        json={"course_id": course_id, "title": "Deadline module", "description": "Desc", "is_published": True},
+        headers=teacher_headers,
+    )
+    module_id = module_response.json()["id"]
+
+    enroll_response = client.post(f"/api/v1/courses/{course_id}/enroll", headers=student_headers)
+    assert enroll_response.status_code == 201
+
+    past_due_at = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    future_due_at = (datetime.now(UTC) + timedelta(days=3)).isoformat()
+
+    assignment_response = client.post(
+        f"/api/v1/modules/{module_id}/assignments",
+        json={
+            "title": "Deadline homework",
+            "instructions_markdown": "Do it",
+            "max_score": 10,
+            "due_at": past_due_at,
+            "is_published": True,
+        },
+        headers=teacher_headers,
+    )
+    assert assignment_response.status_code == 201
+    assignment_payload = assignment_response.json()
+    assignment_id = assignment_payload["id"]
+    assert assignment_payload["due_at"] is not None
+
+    no_deadline_assignment_response = client.post(
+        f"/api/v1/modules/{module_id}/assignments",
+        json={
+            "title": "Optional deadline homework",
+            "instructions_markdown": "Do it later",
+            "max_score": 10,
+            "is_published": True,
+        },
+        headers=teacher_headers,
+    )
+    assert no_deadline_assignment_response.status_code == 201
+    assert no_deadline_assignment_response.json()["due_at"] is None
+
+    submission_response = client.post(
+        f"/api/v1/assignments/{assignment_id}/submissions",
+        headers=student_headers,
+        data={"answer_markdown": "Late answer"},
+    )
+    assert submission_response.status_code == 201
+    assert submission_response.json()["is_late"] is True
+
+    quiz_response = client.post(
+        f"/api/v1/modules/{module_id}/quiz",
+        json={
+            "title": "Deadline quiz",
+            "due_at": future_due_at,
+            "is_published": True,
+            "questions": [
+                {
+                    "content": "What framework are we using?",
+                    "options": ["FastAPI", "Django"],
+                    "correct_option": "FastAPI",
+                    "explanation": "The course is about FastAPI",
+                    "position": 1,
+                }
+            ],
+        },
+        headers=teacher_headers,
+    )
+    assert quiz_response.status_code == 201
+    quiz_payload = quiz_response.json()
+    quiz_id = quiz_payload["id"]
+    question_id = quiz_payload["questions"][0]["id"]
+    assert quiz_payload["due_at"] is not None
+
+    updated_quiz_response = client.patch(
+        f"/api/v1/quizzes/{quiz_id}",
+        json={
+            "title": "Deadline quiz updated",
+            "due_at": past_due_at,
+            "is_published": True,
+            "questions": [
+                {
+                    "content": "What framework are we using?",
+                    "options": ["FastAPI", "Django"],
+                    "correct_option": "FastAPI",
+                    "explanation": "The course is about FastAPI",
+                    "position": 1,
+                }
+            ],
+        },
+        headers=teacher_headers,
+    )
+    assert updated_quiz_response.status_code == 200
+    assert updated_quiz_response.json()["due_at"] is not None
+
+    submit_quiz_response = client.post(
+        f"/api/v1/quizzes/{quiz_id}/submit",
+        json={"answers": [{"question_id": question_id, "selected_option": "FastAPI"}]},
+        headers=student_headers,
+    )
+    assert submit_quiz_response.status_code == 200
+    assert submit_quiz_response.json()["is_late"] is True
+
+    attempts_response = client.get(f"/api/v1/quizzes/{quiz_id}/attempts/me", headers=student_headers)
+    assert attempts_response.status_code == 200
+    assert attempts_response.json()[0]["is_late"] is True
+
+
+def test_in_app_notifications_cover_learning_events_and_risk_alerts(client):
+    teacher = register_and_login(client, email="notify-teacher@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="notify-student@example.com", role="student", first_name="Student")
+    teacher_headers = auth_headers(teacher["access_token"])
+    student_headers = auth_headers(student["access_token"])
+
+    course_response = client.post(
+        "/api/v1/courses",
+        json={"title": "Notifications course", "description": "Desc", "is_published": True},
+        headers=teacher_headers,
+    )
+    course_id = course_response.json()["id"]
+
+    module_response = client.post(
+        "/api/v1/modules",
+        json={"course_id": course_id, "title": "Notifications module", "description": "Desc", "is_published": True},
+        headers=teacher_headers,
+    )
+    module_id = module_response.json()["id"]
+
+    enroll_response = client.post(f"/api/v1/courses/{course_id}/enroll", headers=student_headers)
+    assert enroll_response.status_code == 201
+
+    announcement_response = client.post(
+        f"/api/v1/modules/{module_id}/comments",
+        json={"content": "Please review the new requirements before submitting work."},
+        headers=teacher_headers,
+    )
+    assert announcement_response.status_code == 201
+
+    comment_response = client.post(
+        f"/api/v1/modules/{module_id}/comments",
+        json={"content": "Student comment"},
+        headers=student_headers,
+    )
+    assert comment_response.status_code == 201
+
+    reply_response = client.post(
+        f"/api/v1/modules/{module_id}/comments",
+        json={"content": "Teacher reply", "parent_comment_id": comment_response.json()["id"]},
+        headers=teacher_headers,
+    )
+    assert reply_response.status_code == 201
+
+    initial_due_at = (datetime.now(UTC) + timedelta(days=3)).isoformat()
+    updated_due_at = (datetime.now(UTC) + timedelta(days=5)).isoformat()
+    assignment_response = client.post(
+        f"/api/v1/modules/{module_id}/assignments",
+        json={
+            "title": "Notify assignment",
+            "instructions_markdown": "Do it",
+            "max_score": 10,
+            "is_published": True,
+            "due_at": initial_due_at,
+        },
+        headers=teacher_headers,
+    )
+    assert assignment_response.status_code == 201
+    assignment_id = assignment_response.json()["id"]
+
+    second_assignment_response = client.post(
+        f"/api/v1/modules/{module_id}/assignments",
+        json={
+            "title": "Backup assignment",
+            "instructions_markdown": "Do it too",
+            "max_score": 10,
+            "is_published": True,
+        },
+        headers=teacher_headers,
+    )
+    assert second_assignment_response.status_code == 201
+
+    overdue_assignment_response = client.post(
+        f"/api/v1/modules/{module_id}/assignments",
+        json={
+            "title": "Missed assignment",
+            "instructions_markdown": "This one is already overdue",
+            "max_score": 10,
+            "is_published": True,
+            "due_at": (datetime.now(UTC) - timedelta(days=2)).isoformat(),
+        },
+        headers=teacher_headers,
+    )
+    assert overdue_assignment_response.status_code == 201
+
+    updated_assignment_response = client.patch(
+        f"/api/v1/assignments/{assignment_id}",
+        json={"due_at": updated_due_at},
+        headers=teacher_headers,
+    )
+    assert updated_assignment_response.status_code == 200
+
+    submission_response = client.post(
+        f"/api/v1/assignments/{assignment_id}/submissions",
+        headers=student_headers,
+        data={"answer_markdown": "My answer"},
+    )
+    assert submission_response.status_code == 201
+    submission_id = submission_response.json()["id"]
+
+    teacher_notifications = client.get("/api/v1/users/me/notifications", headers=teacher_headers)
+    assert teacher_notifications.status_code == 200
+    teacher_items = teacher_notifications.json()["items"]
+    assert any(item["type"] == "assignment_submitted" for item in teacher_items)
+
+    grade_response = client.patch(
+        f"/api/v1/assignment-submissions/{submission_id}/grade",
+        json={"score": 9, "feedback_markdown": "Strong work"},
+        headers=teacher_headers,
+    )
+    assert grade_response.status_code == 200
+
+    quiz_response = client.post(
+        f"/api/v1/modules/{module_id}/quiz",
+        json={
+            "title": "Notify quiz",
+            "is_published": True,
+            "questions": [
+                {
+                    "content": "What framework are we using?",
+                    "options": ["FastAPI", "Django"],
+                    "correct_option": "FastAPI",
+                    "explanation": "FastAPI",
+                    "position": 1,
+                }
+            ],
+        },
+        headers=teacher_headers,
+    )
+    assert quiz_response.status_code == 201
+    quiz_id = quiz_response.json()["id"]
+    question_id = quiz_response.json()["questions"][0]["id"]
+
+    failed_quiz_attempt = client.post(
+        f"/api/v1/quizzes/{quiz_id}/submit",
+        json={"answers": [{"question_id": question_id, "selected_option": "Django"}]},
+        headers=student_headers,
+    )
+    assert failed_quiz_attempt.status_code == 200
+
+    student_notifications = client.get("/api/v1/users/me/notifications", headers=student_headers)
+    assert student_notifications.status_code == 200
+    student_payload = student_notifications.json()
+    student_items = student_payload["items"]
+    student_types = {item["type"] for item in student_items}
+    assert "comment_reply" in student_types
+    assert "teacher_announcement" in student_types
+    assert "assignment_published" in student_types
+    assert "deadline_changed" in student_types
+    assert "assignment_feedback" in student_types
+    assert "quiz_published" in student_types
+    assert "performance_risk" in student_types
+    assert student_payload["unread_count"] >= 6
+
+    first_notification_id = student_items[0]["id"]
+    mark_read_response = client.post(f"/api/v1/users/me/notifications/{first_notification_id}/read", headers=student_headers)
+    assert mark_read_response.status_code == 200
+    assert mark_read_response.json()["is_read"] is True
+
+    mark_all_response = client.post("/api/v1/users/me/notifications/read-all", headers=student_headers)
+    assert mark_all_response.status_code == 204
+
+    after_read_all = client.get("/api/v1/users/me/notifications", headers=student_headers)
+    assert after_read_all.status_code == 200
+    assert after_read_all.json()["unread_count"] == 0
+
+
 def test_comment_can_be_deleted_only_by_owner(client):
-    teacher = register_and_login(client, email="teacher@example.com", role="teacher", full_name="Teacher")
-    student = register_and_login(client, email="student@example.com", role="student", full_name="Student")
+    teacher = register_and_login(client, email="teacher@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="student@example.com", role="student", first_name="Student")
     teacher_headers = auth_headers(teacher["access_token"])
     student_headers = auth_headers(student["access_token"])
 
@@ -644,8 +1302,8 @@ def test_comment_can_be_deleted_only_by_owner(client):
 
 
 def test_comment_with_replies_is_soft_deleted(client):
-    teacher = register_and_login(client, email="teacher@example.com", role="teacher", full_name="Teacher")
-    student = register_and_login(client, email="student@example.com", role="student", full_name="Student")
+    teacher = register_and_login(client, email="teacher@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="student@example.com", role="student", first_name="Student")
     teacher_headers = auth_headers(teacher["access_token"])
     student_headers = auth_headers(student["access_token"])
 
@@ -697,8 +1355,8 @@ def test_comment_with_replies_is_soft_deleted(client):
 
 
 def test_deleted_placeholder_is_removed_after_last_reply_is_deleted(client):
-    teacher = register_and_login(client, email="teacher@example.com", role="teacher", full_name="Teacher")
-    student = register_and_login(client, email="student@example.com", role="student", full_name="Student")
+    teacher = register_and_login(client, email="teacher@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="student@example.com", role="student", first_name="Student")
     teacher_headers = auth_headers(teacher["access_token"])
     student_headers = auth_headers(student["access_token"])
 
@@ -743,7 +1401,7 @@ def test_deleted_placeholder_is_removed_after_last_reply_is_deleted(client):
 
 
 def test_module_content_can_be_updated_and_deleted(client):
-    teacher = register_and_login(client, email="teacher@example.com", role="teacher", full_name="Teacher")
+    teacher = register_and_login(client, email="teacher@example.com", role="teacher", first_name="Teacher")
     teacher_headers = auth_headers(teacher["access_token"])
 
     course_response = client.post(
@@ -786,8 +1444,8 @@ def test_module_content_can_be_updated_and_deleted(client):
 
 
 def test_quiz_after_attempts_allows_only_metadata_update(client):
-    teacher = register_and_login(client, email="teacher@example.com", role="teacher", full_name="Teacher")
-    student = register_and_login(client, email="student@example.com", role="student", full_name="Student")
+    teacher = register_and_login(client, email="teacher@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="student@example.com", role="student", first_name="Student")
     teacher_headers = auth_headers(teacher["access_token"])
     student_headers = auth_headers(student["access_token"])
 
@@ -879,8 +1537,8 @@ def test_quiz_after_attempts_allows_only_metadata_update(client):
 
 @pytest.mark.skip(reason="Assignment submissions now use a single editable current answer instead of multiple attempts")
 def test_assignments_support_attachments_attempts_and_grading(client):
-    teacher = register_and_login(client, email="teacher@example.com", role="teacher", full_name="Teacher")
-    student = register_and_login(client, email="student@example.com", role="student", full_name="Student")
+    teacher = register_and_login(client, email="teacher@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="student@example.com", role="student", first_name="Student")
     teacher_headers = auth_headers(teacher["access_token"])
     student_headers = auth_headers(student["access_token"])
 
@@ -970,8 +1628,8 @@ def test_assignments_support_attachments_attempts_and_grading(client):
 
 
 def test_assignments_support_single_submission_edit_delete_and_grading(client):
-    teacher = register_and_login(client, email="teacher2@example.com", role="teacher", full_name="Teacher")
-    student = register_and_login(client, email="student2@example.com", role="student", full_name="Student")
+    teacher = register_and_login(client, email="teacher2@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="student2@example.com", role="student", first_name="Student")
     teacher_headers = auth_headers(teacher["access_token"])
     student_headers = auth_headers(student["access_token"])
 
@@ -1075,3 +1733,84 @@ def test_assignments_support_single_submission_edit_delete_and_grading(client):
     my_submissions_after_delete = client.get(f"/api/v1/assignments/{assignment_id}/submissions/me", headers=student_headers)
     assert my_submissions_after_delete.status_code == 200
     assert my_submissions_after_delete.json() == []
+
+
+def test_chat_supports_student_teacher_dialog_with_websocket_delivery(client):
+    teacher = register_and_login(client, email="chat-teacher@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="chat-student@example.com", role="student", first_name="Student")
+    teacher_headers = auth_headers(teacher["access_token"])
+    student_headers = auth_headers(student["access_token"])
+
+    course_response = client.post(
+        "/api/v1/courses",
+        json={"title": "Chat course", "description": "Desc", "is_published": True},
+        headers=teacher_headers,
+    )
+    assert course_response.status_code == 201
+    course_id = course_response.json()["id"]
+
+    enroll_response = client.post(f"/api/v1/courses/{course_id}/enroll", headers=student_headers)
+    assert enroll_response.status_code == 201
+
+    student_conversations = client.get("/api/v1/chat/conversations", headers=student_headers)
+    assert student_conversations.status_code == 200
+    assert student_conversations.json()[0]["partner_id"] == teacher["user"]["id"]
+
+    with client.websocket_connect(f"/api/v1/chat/ws?token={teacher['access_token']}") as teacher_ws:
+        send_response = client.post(
+            "/api/v1/chat/messages",
+            json={"recipient_id": teacher["user"]["id"], "content": "Здравствуйте, можно уточнить дедлайн?"},
+            headers=student_headers,
+        )
+        assert send_response.status_code == 201
+        sent_message = send_response.json()
+        assert sent_message["course_id"] == course_id
+        assert sent_message["sender_id"] == student["user"]["id"]
+
+        event = teacher_ws.receive_json()
+        assert event["type"] == "chat.message"
+        assert event["message"]["content"] == "Здравствуйте, можно уточнить дедлайн?"
+        assert event["message"]["sender_id"] == student["user"]["id"]
+
+    teacher_messages = client.get(f"/api/v1/chat/messages/{student['user']['id']}", headers=teacher_headers)
+    assert teacher_messages.status_code == 200
+    assert teacher_messages.json()[0]["content"] == "Здравствуйте, можно уточнить дедлайн?"
+
+    teacher_notifications = client.get("/api/v1/users/me/notifications", headers=teacher_headers)
+    assert teacher_notifications.status_code == 200
+    assert teacher_notifications.json()["items"][0]["type"] == "chat_message"
+    assert teacher_notifications.json()["items"][0]["link_url"] == f"/chat?partner={student['user']['id']}"
+
+    mark_read_response = client.post(f"/api/v1/chat/messages/{student['user']['id']}/read", headers=teacher_headers)
+    assert mark_read_response.status_code == 204
+
+    updated_student_conversations = client.get("/api/v1/chat/conversations", headers=student_headers)
+    assert updated_student_conversations.status_code == 200
+    assert updated_student_conversations.json()[0]["last_message"] == "Здравствуйте, можно уточнить дедлайн?"
+
+
+def test_chat_is_available_only_between_connected_course_participants(client):
+    teacher = register_and_login(client, email="chat-owner@example.com", role="teacher", first_name="Teacher")
+    student = register_and_login(client, email="chat-member@example.com", role="student", first_name="Student")
+    stranger = register_and_login(client, email="chat-stranger@example.com", role="teacher", first_name="Stranger")
+
+    teacher_headers = auth_headers(teacher["access_token"])
+    student_headers = auth_headers(student["access_token"])
+
+    course_response = client.post(
+        "/api/v1/courses",
+        json={"title": "Access course", "description": "Desc", "is_published": True},
+        headers=teacher_headers,
+    )
+    assert course_response.status_code == 201
+
+    enroll_response = client.post(f"/api/v1/courses/{course_response.json()['id']}/enroll", headers=student_headers)
+    assert enroll_response.status_code == 201
+
+    forbidden_message = client.post(
+        "/api/v1/chat/messages",
+        json={"recipient_id": stranger["user"]["id"], "content": "Пишу вне курса"},
+        headers=student_headers,
+    )
+    assert forbidden_message.status_code == 403
+

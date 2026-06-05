@@ -15,6 +15,7 @@ class Quiz(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     module_id: Mapped[UUID] = mapped_column(ForeignKey("modules.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_published: Mapped[bool] = mapped_column(nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     updated_at: Mapped[datetime] = mapped_column(

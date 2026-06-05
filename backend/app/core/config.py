@@ -19,6 +19,15 @@ class Settings(BaseSettings):
     cloudinary_cloud_name: str | None = None
     cloudinary_api_key: str | None = None
     cloudinary_api_secret: str | None = None
+    llm_provider: str = "groq"
+    llm_fallback_providers: str = "openai"
+    groq_api_key: str | None = None
+    groq_model: str = "llama-3.3-70b-versatile"
+    groq_transcription_model: str = "whisper-large-v3"
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4.1-mini"
+    openai_base_url: str = "https://api.openai.com/v1"
 
     model_config = SettingsConfigDict(
         env_file=".env",

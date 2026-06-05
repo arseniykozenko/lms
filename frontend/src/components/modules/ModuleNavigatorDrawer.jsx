@@ -12,8 +12,16 @@ export function ModuleNavigatorDrawer({
   currentModuleId,
   contents = [],
   currentContentId = null,
+  moduleBaseRoute = null,
+  activeModuleTab = "content",
 }) {
   const currentModule = modules.find((module) => module.id === currentModuleId) || null;
+  const moduleSections = [
+    { key: "content", label: "Материал" },
+    { key: "assignment", label: "Задание" },
+    { key: "quiz", label: "Тест" },
+    { key: "comments", label: "Обсуждение" },
+  ];
 
   return (
     <Drawer
@@ -21,11 +29,51 @@ export function ModuleNavigatorDrawer({
       placement="right"
       open={open}
       onClose={onClose}
-      width={392}
+      width={460}
       className="module-nav-drawer"
     >
       <div className="module-nav-drawer-stack">
         <ModuleSidebarNav modules={modules} currentModuleId={currentModuleId} onNavigate={onClose} />
+
+        {moduleBaseRoute ? (
+          <Card className="panel-card module-sidebar-card" title="Разделы модуля">
+            <List
+              dataSource={moduleSections}
+              renderItem={(section) => {
+                const isActive = section.key === activeModuleTab;
+                return (
+                  <List.Item className={`module-nav-item ${isActive ? "module-nav-item-active" : ""}`}>
+                    {isActive ? (
+                      <div className="module-nav-content">
+                        <div className="module-nav-copy">
+                          <div className="module-nav-meta-copy">
+                            <Typography.Text className="module-nav-title-text">{section.label}</Typography.Text>
+                          </div>
+                        </div>
+                        <div className="module-nav-actions">
+                          <Tag color="gold">Сейчас</Tag>
+                        </div>
+                      </div>
+                    ) : (
+                      <Link className="module-nav-link" to={`${moduleBaseRoute}?tab=${section.key}`} onClick={onClose}>
+                        <div className="module-nav-content">
+                          <div className="module-nav-copy">
+                            <div className="module-nav-meta-copy">
+                              <Typography.Text className="module-nav-title-text">{section.label}</Typography.Text>
+                            </div>
+                          </div>
+                          <div className="module-nav-actions">
+                            <Typography.Text className="module-nav-open">Открыть</Typography.Text>
+                          </div>
+                        </div>
+                      </Link>
+                    )}
+                  </List.Item>
+                );
+              }}
+            />
+          </Card>
+        ) : null}
 
         <Card
           className="panel-card module-sidebar-card"

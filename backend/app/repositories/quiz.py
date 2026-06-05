@@ -44,8 +44,21 @@ class QuizRepository:
     def list_attempts_for_user(self, quiz_id: UUID, user_id: UUID) -> list[QuizAttempt]:
         stmt = (
             select(QuizAttempt)
-            .options(selectinload(QuizAttempt.answers).selectinload(QuizAnswer.question))
+            .options(selectinload(QuizAttempt.quiz), selectinload(QuizAttempt.answers).selectinload(QuizAnswer.question))
             .where(QuizAttempt.quiz_id == quiz_id, QuizAttempt.user_id == user_id)
             .order_by(QuizAttempt.created_at.desc())
         )
         return list(self.db.scalars(stmt))
+
+    def has_attempt_for_user(self, quiz_id: UUID, user_id: UUID) -> bool:
+        stmt = select(QuizAttempt.id).where(QuizAttempt.quiz_id == quiz_id, QuizAttempt.user_id == user_id).limit(1)
+        return self.db.scalar(stmt) is not None
+
+    def has_passing_attempt_for_user(self, quiz_id: UUID, user_id: UUID, passing_ratio: float) -> bool:
+        attempts = self.list_attempts_for_user(quiz_id, user_id)
+        for attempt in attempts:
+            if attempt.total_questions <= 0:
+                continue
+            if (attempt.score / attempt.total_questions) >= passing_ratio:
+                return True
+        return False

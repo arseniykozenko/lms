@@ -37,6 +37,9 @@ export function ModuleQuizDrawer({
             <Radio.Button value>Опубликовать</Radio.Button>
           </Radio.Group>
         </Form.Item>
+        <Form.Item name="due_at" label="Дедлайн">
+          <Input type="datetime-local" />
+        </Form.Item>
 
         {questionsLocked ? (
           <Alert

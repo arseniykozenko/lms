@@ -18,7 +18,8 @@ import {
 import { AttachmentList } from "../shared/AttachmentList";
 import { MarkdownContent } from "../shared/MarkdownContent";
 import { MarkdownEditor } from "../shared/MarkdownEditor";
-import { formatDate } from "./moduleHelpers";
+import { getErrorMessage } from "../../lib/errors";
+import { formatDate, formatDeadline, isDeadlinePassed } from "./moduleHelpers";
 
 const supportedSubmissionExtensions = new Set([".pdf", ".zip", ".rar", ".7z", ".pptx", ".doc", ".docx", ".txt"]);
 const supportedSubmissionTypes = new Set([
@@ -136,6 +137,9 @@ function TeacherAssignmentCard({ assignment, submissions, isDeleting, onDelete, 
               {assignment.is_published ? "Опубликовано" : "Черновик"}
             </Tag>
             {assignment.max_score != null ? <Tag color="gold">До {assignment.max_score} баллов</Tag> : null}
+            <Tag color={assignment.due_at ? (isDeadlinePassed(assignment.due_at) ? "red" : "geekblue") : "default"}>
+              {formatDeadline(assignment.due_at)}
+            </Tag>
           </Space>
           <Typography.Text type="secondary">
             {assignment.has_submissions ? `Есть ответы студентов: ${submissions.length}` : "Ответов пока нет"}
@@ -246,7 +250,7 @@ function StudentAssignmentCard({
       }
       message.success("Ответ отправлен");
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось отправить ответ");
+      message.error(getErrorMessage(error, "Не удалось отправить ответ"));
     }
   }
 
@@ -266,7 +270,7 @@ function StudentAssignmentCard({
       setIsEditing(false);
       message.success("Ответ обновлен");
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось обновить ответ");
+      message.error(getErrorMessage(error, "Не удалось обновить ответ"));
     }
   }
 
@@ -282,7 +286,7 @@ function StudentAssignmentCard({
       }
       message.success("Ответ удален");
     } catch (error) {
-      message.error(error?.response?.data?.detail || "Не удалось удалить ответ");
+      message.error(getErrorMessage(error, "Не удалось удалить ответ"));
     }
   }
 
@@ -297,11 +301,15 @@ function StudentAssignmentCard({
               {assignment.title}
             </Typography.Title>
             {assignment.max_score != null ? <Tag color="gold">До {assignment.max_score} баллов</Tag> : null}
+            <Tag color={assignment.due_at ? (isDeadlinePassed(assignment.due_at) ? "red" : "geekblue") : "default"}>
+              {formatDeadline(assignment.due_at)}
+            </Tag>
             {currentSubmission ? (
               <Tag color={currentSubmission.status === "graded" ? "green" : "blue"}>
                 {currentSubmission.status === "graded" ? "Проверено" : "Попытка отправлена"}
               </Tag>
             ) : null}
+            {currentSubmission?.is_late ? <Tag color="red">Сдано с опозданием</Tag> : null}
           </Space>
           <Typography.Text type="secondary">
             {currentSubmission
@@ -426,6 +434,14 @@ function StudentAssignmentCard({
               )}
             </Descriptions.Item>
             <Descriptions.Item label="Последнее изменение">{formatDate(currentSubmission.updated_at)}</Descriptions.Item>
+            <Descriptions.Item label="Дедлайн">{formatDeadline(assignment.due_at)}</Descriptions.Item>
+            <Descriptions.Item label="Срок сдачи">
+              {currentSubmission.is_late ? (
+                <span className="assignment-status-value">Сдано после дедлайна</span>
+              ) : (
+                <span className="assignment-status-value assignment-status-value-success">В срок</span>
+              )}
+            </Descriptions.Item>
             <Descriptions.Item label="Ответ в виде файла">
               <AttachmentList attachments={currentSubmission.attachments || []} emptyText="Файлы не приложены" />
             </Descriptions.Item>
